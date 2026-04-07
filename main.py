@@ -1,13 +1,11 @@
 """
 NEXO — Agente conversacional para restaurantes
-Prototipo con LangGraph + Claude API
+Prototipo con LangGraph + OpenAI API
 
 Flujo: recibir → conversar → comandar → cobrar
 """
 
 import json
-import uuid
-from datetime import datetime
 from typing import Annotated, TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -15,9 +13,18 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 import os
+from prompts import SYSTEM_PROMPT
+from utils.menu_utils import formatear_menu
+from utils.order_utils import generar_comanda, generar_link_pago
+from utils.input_utils import limitar_entrada_usuario
 
+# Variables de entorno y configuración
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AI_MODEL = os.getenv("AI_MODEL")
+# ~4 caracteres por token en espanol => 360 chars ~ 90 tokens.
+MAX_INPUT_CHARS = int(os.getenv("MAX_INPUT_CHARS", "360"))
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "180"))
 
 # ─────────────────────────────────────────────
 # MODELOS DE DATOS
@@ -36,38 +43,11 @@ MENU = {
     "combo_2":             {"nombre": "Combo 2 (Doble + Papas + Jugo)",      "precio": 36000, "disponible": True},
 }
 
-SYSTEM_PROMPT = """Eres Nexo, un agente de IA diseñado para ayudar en la toma de pedidos. Eres amable, eficiente y conciso.
-
-MENÚ DISPONIBLE:
-{menu}
-
-INSTRUCCIONES:
-1. Saluda al cliente y pregunta qué desea pedir.
-2. Toma el pedido en lenguaje natural. Puedes sugerir combos si es conveniente.
-3. Si un producto NO está disponible, informa al cliente y ofrece alternativas.
-4. Cuando tengas el pedido completo, confirma los ítems y el total antes de proceder.
-5. Una vez confirmado, indica que generarás el link de pago.
-
-RESPONDE SIEMPRE en este formato JSON (sin markdown, sin texto extra):
-{{
-  "respuesta": "<mensaje para el cliente>",
-  "items": [
-    {{"id": "<id_producto>", "nombre": "<nombre>", "cantidad": <int>, "precio_unitario": <int>}}
-  ],
-  "pedido_listo": <true|false>,
-  "esperando_confirmacion": <true|false>
-}}
-
-- "items": lista de lo que el cliente ha pedido hasta ahora. Vacío [] si aún no ha pedido nada.
-- "pedido_listo": true solo cuando el cliente haya CONFIRMADO su pedido explícitamente.
-- "esperando_confirmacion": true cuando hayas presentado el resumen y estés esperando que el cliente confirme.
-"""
-
 # ─────────────────────────────────────────────
 # ESTADO DEL AGENTE
 # ─────────────────────────────────────────────
 
-class NexoState(TypedDict):
+class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     items: list[dict]
     pedido_listo: bool
@@ -79,47 +59,19 @@ class NexoState(TypedDict):
 
 
 # ─────────────────────────────────────────────
-# UTILIDADES
-# ─────────────────────────────────────────────
-
-def formatear_menu() -> str:
-    lineas = []
-    for item_id, item in MENU.items():
-        estado = "✅" if item["disponible"] else "❌ NO DISPONIBLE"
-        lineas.append(f"- {item['nombre']} (${item['precio']:,} COP) [{estado}] — id: {item_id}")
-    return "\n".join(lineas)
-
-
-def calcular_total(items: list[dict]) -> int:
-    return sum(i["cantidad"] * i["precio_unitario"] for i in items)
-
-
-def generar_comanda(items: list[dict], telefono: str) -> dict:
-    return {
-        "id": str(uuid.uuid4())[:8].upper(),
-        "timestamp": datetime.now().isoformat(),
-        "telefono": telefono,
-        "items": items,
-        "total": calcular_total(items),
-        "estado": "pendiente_pago",
-    }
-
-
-def generar_link_pago(comanda: dict) -> str:
-    # En producción: llamada real a Wompi
-    return f"https://checkout.wompi.co/p/?public-key=DEMO&amount-in-cents={comanda['total'] * 100}&reference={comanda['id']}"
-
-
-# ─────────────────────────────────────────────
 # NODOS DEL GRAFO
 # ─────────────────────────────────────────────
 
-llm = ChatOpenAI(model="gpt-4", temperature=0.3)
+llm = ChatOpenAI(
+    model=AI_MODEL,
+    temperature=0.3,
+    max_tokens=MAX_OUTPUT_TOKENS,
+)
     
 
-def nodo_conversar(state: NexoState) -> NexoState:
+def nodo_conversar(state: AgentState) -> AgentState:
     """Llama a ChatGPT con el historial y obtiene respuesta + estado del pedido."""
-    system = SYSTEM_PROMPT.format(menu=formatear_menu())
+    system = SYSTEM_PROMPT.format(menu=formatear_menu(MENU))
     
     response = llm.invoke(
         [SystemMessage(content=system)] + state["messages"]
@@ -164,7 +116,7 @@ def nodo_conversar(state: NexoState) -> NexoState:
     }
 
 
-def nodo_generar_comanda(state: NexoState) -> NexoState:
+def nodo_generar_comanda(state: AgentState) -> AgentState:
     """Genera la comanda y el link de pago una vez confirmado el pedido."""
     comanda = generar_comanda(state["items"], state["telefono_cliente"])
     link = generar_link_pago(comanda)
@@ -190,7 +142,7 @@ def nodo_generar_comanda(state: NexoState) -> NexoState:
 # ROUTER — decide si ya generar comanda o seguir conversando
 # ─────────────────────────────────────────────
 
-def router(state: NexoState) -> str:
+def router(state: AgentState) -> str:
     if state.get("pedido_listo"):
         return "generar_comanda"
     return END
@@ -201,7 +153,7 @@ def router(state: NexoState) -> str:
 # ─────────────────────────────────────────────
 
 def construir_grafo() -> StateGraph:
-    builder = StateGraph(NexoState)
+    builder = StateGraph(AgentState)
     
     builder.add_node("conversar", nodo_conversar)
     builder.add_node("generar_comanda", nodo_generar_comanda)
@@ -223,7 +175,7 @@ def construir_grafo() -> StateGraph:
 def iniciar_sesion(telefono: str = "+57300000000"):
     grafo = construir_grafo()
     
-    estado: NexoState = {
+    estado: AgentState = {
         "messages": [],
         "items": [],
         "pedido_listo": False,
@@ -234,14 +186,14 @@ def iniciar_sesion(telefono: str = "+57300000000"):
         "etapa": "conversando",
     }
 
-    print("\n" + "="*55)
+    print("\n" + "="*57)
     print("  🍔 NEXO — Agente de pedidos NexoBurger")
-    print("="*55)
+    print("="*57)
     print("  Escribe tu mensaje | 'salir' para terminar")
-    print("="*55 + "\n")
+    print("="*57 + "\n")
 
     # Mensaje inicial del cliente para arrancar la conversación
-    msg_inicio = "Hola, quiero hacer un pedido"
+    msg_inicio = limitar_entrada_usuario("Hola, quiero hacer un pedido", MAX_INPUT_CHARS)
     print(f"[Tú] {msg_inicio}")
     estado["messages"] = [HumanMessage(content=msg_inicio)]
     
@@ -263,23 +215,27 @@ def iniciar_sesion(telefono: str = "+57300000000"):
         if not entrada:
             continue
 
-        estado["messages"] = estado["messages"] + [HumanMessage(content=entrada)]
+        entrada_limpia = limitar_entrada_usuario(entrada, MAX_INPUT_CHARS)
+        if len(entrada_limpia) < len(entrada):
+            print(
+                f"Tu mensaje fue recortado a {MAX_INPUT_CHARS} caracteres para optimizar costos."
+            )
+        estado["messages"] = estado["messages"] + [HumanMessage(content=entrada_limpia)]
         estado = grafo.invoke(estado)
         
         ultimo = estado["messages"][-1]
         print(f"\n[Nexo] {ultimo.content}\n")
 
     if estado.get("comanda"):
-        print("\n" + "="*55)
+        print("\n" + "="*57)
         print("  📋 COMANDA GENERADA")
-        print("="*55)
+        print("="*57)
         print(json.dumps(estado["comanda"], indent=2, ensure_ascii=False))
-        print("="*55)
+        print("="*57)
 
 
 # ─────────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────────
-
 if __name__ == "__main__":
     iniciar_sesion(telefono="+573001234567")
