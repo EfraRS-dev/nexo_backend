@@ -64,7 +64,7 @@ def enviar_recibo(telefono: str, comanda: dict) -> str | None:
     dir_linea = f"\n📍 Dirección: {direccion}" if direccion else ""
 
     texto = (
-        f"🧾 *Recibo — NexoBurger*\n"
+        f"🧾 *Recibo — {settings.restaurante_nombre}*\n"
         f"Ref: {comanda.get('referencia', '—')}\n\n"
         f"{lineas}\n\n"
         f"*Total: ${comanda.get('total', 0):,} COP*\n"

@@ -106,3 +106,16 @@ Migrar el prototipo CLI actual (LangGraph + OpenAI) a un backend **FastAPI** que
 ## Excluido (Pro/Futuro)
 
 Canal web, pedidos agendados, recuperador de ventas, multi-estación, impresión ESC/POS, múltiples métodos de pago, movimientos de dinero, analítica, reseñas, panel admin Next.js, deploy Railway, multi-tenancy
+
+---
+
+## TODO: Migración multi-restaurante (deuda técnica)
+
+El agente actualmente soporta un único restaurante configurado via `RESTAURANTE_NOMBRE`. Las siguientes tareas convierten el sistema en una plataforma real multi-tenant:
+
+1. **Propagar `restaurante_id` desde el contexto del request** — Resolverlo en el webhook de WhatsApp a partir del número destino de Twilio, en lugar de usar el default `"default"` hardcodeado en `menu_service.py` y `seed_menu.py`.
+2. **Eliminar defaults de `restaurante_id`** — En `app/services/menu_service.py`, quitar `restaurante_id="default"` como valor por defecto y forzarlo a ser explícito en cada llamada.
+3. **Resolver `restaurante_nombre` en runtime desde DB** — En lugar de usar `settings.restaurante_nombre` (global), leer el nombre del restaurante desde la tabla `restaurantes` en base al `restaurante_id` de la sesión activa.
+4. **Tabla `restaurantes`** — Crear modelo `Restaurante` con campos: `id`, `nombre`, `numero_whatsapp`, `activo`, `config_json`. Agregar migración Alembic correspondiente.
+5. **Aislamiento de datos** — Garantizar que todas las queries de menú, pedidos y conversaciones estén siempre filtradas por `restaurante_id` para evitar fugas de datos entre tenants.
+6. **Seed parametrizable** — Actualizar `scripts/seed_menu.py` para aceptar `--restaurante-id` como argumento CLI y poder cargar menús por restaurante.

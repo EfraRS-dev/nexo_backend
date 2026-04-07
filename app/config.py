@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8000"
     debug: bool = False
     log_level: str = "INFO"
+    restaurante_nombre: str = "Tu Restaurante"
 
 
 settings = Settings()

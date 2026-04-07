@@ -178,7 +178,10 @@ def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
     Lee el menú del parámetro menu_texto (inyectado por el grafo o el webhook).
     RF-03, RF-04, RF-06, RF-09.
     """
-    system = SYSTEM_PROMPT.format(menu=menu_texto or "(menú no disponible)")
+    system = SYSTEM_PROMPT.format(
+        menu=menu_texto or "(menú no disponible)",
+        restaurante=settings.restaurante_nombre,
+    )
 
     response = _get_llm_json().invoke(
         [SystemMessage(content=system)] + state["messages"]
@@ -237,7 +240,10 @@ def nodo_faq(state: AgentState, menu_texto: str = "") -> dict:
     )
 
     response = _get_llm().invoke([
-        SystemMessage(content=FAQ_PROMPT.format(menu=menu_texto or "(menú no disponible)")),
+        SystemMessage(content=FAQ_PROMPT.format(
+            menu=menu_texto or "(menú no disponible)",
+            restaurante=settings.restaurante_nombre,
+        )),
         HumanMessage(content=ultimo_mensaje),
     ])
 

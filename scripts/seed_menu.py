@@ -1,16 +1,14 @@
 """
-Seed script: carga el menú de NexoBurger en la tabla `menu`.
+Seed script: carga el menú del restaurante en la tabla `menu`.
 
 Uso:
     python scripts/seed_menu.py
 """
 import os
 import sys
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
-
 load_dotenv()
 
 from app.database import SessionLocal
@@ -34,6 +32,12 @@ MENU_SEED = {
         "precio": 12000,
         "disponible": True,
         "categoria": "perros",
+    },
+      "salchipapa": {
+        "nombre": "Salchipapa",
+        "precio": 19000,
+        "disponible": True,
+        "categoria": "favoritos",
     },
     "papas_medianas": {
         "nombre": "Papas Medianas",

@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Nexo API",
-    description="Agente conversacional para restaurantes — del mensaje a la comanda, en segundos.",
+    description=f"Agente conversacional para {settings.restaurante_nombre} — del mensaje a la comanda, en segundos.",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -32,4 +32,4 @@ app.include_router(whatsapp.router)
 
 @app.get("/health", tags=["infra"])
 def health():
-    return {"status": "ok", "service": "nexo"}
+    return {"status": "ok", "datetime": dt.datetime.now().isoformat()}

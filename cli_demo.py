@@ -14,6 +14,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 import os
 from cli_prompts import SYSTEM_PROMPT
+
+load_dotenv()
 from utils.menu_utils import formatear_menu
 from utils.order_utils import generar_comanda, generar_link_pago
 from utils.input_utils import limitar_entrada_usuario
@@ -187,7 +189,8 @@ def iniciar_sesion(telefono: str = "+57300000000"):
     }
 
     print("\n" + "="*57)
-    print("  🍔 NEXO — Agente de pedidos NexoBurger")
+    _nombre = os.getenv("RESTAURANTE_NOMBRE", "Tu Restaurante")
+    print(f"  🍔 NEXO — Agente de pedidos · {_nombre}")
     print("="*57)
     print("  Escribe tu mensaje | 'salir' para terminar")
     print("="*57 + "\n")
