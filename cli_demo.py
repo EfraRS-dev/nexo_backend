@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 import os
-from prompts import SYSTEM_PROMPT
+from cli_prompts import SYSTEM_PROMPT
 from utils.menu_utils import formatear_menu
 from utils.order_utils import generar_comanda, generar_link_pago
 from utils.input_utils import limitar_entrada_usuario
