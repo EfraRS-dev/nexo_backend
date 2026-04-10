@@ -118,6 +118,7 @@ def _repair_json(raw: str, state: AgentState) -> dict:
             "items": state.get("items", []),
             "tipo_pedido": state.get("tipo_pedido", ""),
             "direccion_entrega": state.get("direccion_entrega"),
+            "metodo_pago": state.get("metodo_pago", ""),
             "pedido_listo": False,
             "esperando_confirmacion": False,
         }
@@ -189,12 +190,14 @@ def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
 
     data = _parse_llm_json(response.content, state)
 
-    respuesta_texto = data.get("respuesta", "")
+    # Use `or ""` to handle both missing key AND null value from LLM
+    respuesta_texto = data.get("respuesta") or ""
     items = data.get("items") or state.get("items", [])
     pedido_listo = bool(data.get("pedido_listo", False))
     esperando = bool(data.get("esperando_confirmacion", False))
     tipo_pedido = data.get("tipo_pedido") or state.get("tipo_pedido", "")
     direccion = data.get("direccion_entrega") or state.get("direccion_entrega")
+    metodo_pago = data.get("metodo_pago") or state.get("metodo_pago", "")
 
     etapa = state.get("etapa", "conversando")
     if pedido_listo:
@@ -210,6 +213,7 @@ def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
         "esperando_confirmacion": esperando,
         "tipo_pedido": tipo_pedido,
         "direccion_entrega": direccion,
+        "metodo_pago": metodo_pago,
         "etapa": etapa,
     }
 
@@ -317,13 +321,11 @@ def nodo_escalamiento(state: AgentState) -> dict:
 def nodo_generar_comanda(state: AgentState) -> dict:
     """
     Construye el dict de comanda en memoria para que el webhook lo persista.
-    RF-13, RF-14.
+    La referencia secuencial real (NEX-000001) es asignada por order_service
+    al momento de crear el registro en DB. RF-13, RF-14.
     """
-    import uuid as _uuid
-
     items = state.get("items", [])
     total = sum(i["cantidad"] * i["precio_unitario"] for i in items)
-    referencia = "NEX-" + str(_uuid.uuid4())[:4].upper()
 
     lineas = "\n".join(
         f"• {i['cantidad']}x {i['nombre']} — ${i['cantidad'] * i['precio_unitario']:,} COP"
@@ -331,19 +333,20 @@ def nodo_generar_comanda(state: AgentState) -> dict:
     )
 
     comanda = {
-        "referencia": referencia,
+        "referencia": "PENDIENTE",  # asignada por crear_pedido() al guardar en DB
         "items": items,
         "total": total,
         "tipo_pedido": state.get("tipo_pedido", "llevar"),
         "direccion_entrega": state.get("direccion_entrega"),
+        "metodo_pago": state.get("metodo_pago", "online") or "online",
         "estado": "pendiente",
     }
 
     msg = (
-        f"✅ *Pedido registrado* — Ref: {referencia}\n\n"
+        f"✅ *Pedido registrado*\n\n"
         f"{lineas}\n\n"
         f"*Total: ${total:,} COP*\n\n"
-        "Generando tu enlace de pago… ⏳"
+        "Procesando tu pedido… ⏳"
     )
 
     return {
@@ -359,29 +362,22 @@ def nodo_generar_comanda(state: AgentState) -> dict:
 
 def nodo_pago(state: AgentState) -> dict:
     """
-    Genera el link de pago Wompi y lo envía al cliente. RF-17.
-    En producción el webhook llama a payment_service.generar_link_pago();
-    aquí construimos el mensaje con el link ya disponible en state["link_pago"].
+    Genera el mensaje final según el método de pago. RF-17.
+    - "caja": confirmación de pedido registrado, cliente paga al recoger.
+    - "online" (o domicilio): avisa que el link de pago llega en seguida
+      (el webhook lo genera y envía tras persistir el pedido en DB).
     """
-    comanda = state.get("comanda", {})
-    link = state.get("link_pago")
+    metodo = state.get("metodo_pago", "online") or "online"
 
-    if link:
+    if metodo == "caja":
         msg = (
-            f"💳 *Paga tu pedido aquí:*\n{link}\n\n"
-            "Una vez confirmado el pago recibirás la notificación. ¡Gracias! 🍔"
+            "✅ ¡Listo! Tu pedido está registrado. "
+            "Te esperamos para recogerlo — en un momento recibirás tu número de pedido. 🍔"
         )
     else:
-        # Fallback: link de demo (se sustituye en Fase 4 por Wompi real)
-        referencia = comanda.get("referencia", "NEX-0000")
-        total = comanda.get("total", 0)
-        link_demo = (
-            f"https://checkout.wompi.co/p/?public-key=DEMO"
-            f"&amount-in-cents={total * 100}&reference={referencia}"
-        )
         msg = (
-            f"💳 *Paga tu pedido aquí:*\n{link_demo}\n\n"
-            "Una vez confirmado el pago recibirás la notificación. ¡Gracias! 🍔"
+            "💳 ¡Todo listo! En un momento recibirás tu enlace de pago. "
+            "Una vez confirmado, ¡empezamos a preparar tu pedido! 🍔"
         )
 
     return {

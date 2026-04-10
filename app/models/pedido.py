@@ -40,6 +40,7 @@ class Pedido(Base):
         String, nullable=False, default=TipoPedido.llevar
     )
     direccion_entrega: Mapped[str | None] = mapped_column(String, nullable=True)
+    metodo_pago: Mapped[str] = mapped_column(String, nullable=False, default="online")  # "online" | "caja"
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # COP
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

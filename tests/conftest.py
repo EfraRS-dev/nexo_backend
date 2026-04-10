@@ -42,6 +42,7 @@ def _make_state(**overrides) -> AgentState:
         "direccion_entrega": None,
         "comanda": None,
         "link_pago": None,
+        "metodo_pago": "",
         "telefono_cliente": "+573001234567",
         "cliente_id": None,
         "conversacion_id": None,

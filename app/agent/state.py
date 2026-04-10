@@ -23,6 +23,10 @@ class AgentState(TypedDict):
     tipo_pedido: str          # "llevar" | "domicilio"
     direccion_entrega: Optional[str]
 
+    # ── Método de pago (solo para llevar) ────────────────────────────
+    # "online" → link Wompi  |  "caja" → pago al recoger  |  "" → sin determinar
+    metodo_pago: str
+
     # ── Comanda y pago (resultado final) ────────────────────────────
     comanda: Optional[dict]
     link_pago: Optional[str]

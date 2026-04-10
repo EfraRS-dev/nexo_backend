@@ -198,6 +198,30 @@ class TestWebhookWhatsapp:
         with patch("app.routers.whatsapp._validar_firma_twilio", return_value=True):
             yield
 
+    @pytest.fixture(autouse=True)
+    def inline_queue(self):
+        """
+        Reemplaza la cola async con procesamiento inline para que los tests
+        puedan hacer assert en los efectos secundarios de forma síncrona.
+        """
+        import app.routers.whatsapp as wa
+
+        async def mock_ensure_worker(telefono: str) -> None:
+            class _InlineQueue:
+                async def put(self, mensaje: str) -> None:
+                    db = MagicMock()
+                    await wa._procesar_mensaje(db, telefono, mensaje)
+
+                def task_done(self) -> None:
+                    pass
+
+            wa._phone_queues[telefono] = _InlineQueue()
+
+        with patch.object(wa, "_ensure_worker", mock_ensure_worker):
+            wa._phone_queues.clear()
+            yield
+            wa._phone_queues.clear()
+
     @patch("app.routers.whatsapp.enviar_mensaje")
     @patch("app.routers.whatsapp.construir_grafo")
     @patch("app.routers.whatsapp.obtener_menu_formateado")

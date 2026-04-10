@@ -68,6 +68,7 @@ def guardar_estado_pedido(db: Session, conversacion: Conversacion, resultado: di
         "etapa": resultado.get("etapa", "conversando"),
         "esperando_confirmacion": resultado.get("esperando_confirmacion", False),
         "comanda": resultado.get("comanda"),
+        "metodo_pago": resultado.get("metodo_pago", ""),
     }
     # Almacenamos en el mismo JSONB usando una clave reservada
     mensajes_actuales = conversacion.mensajes or []

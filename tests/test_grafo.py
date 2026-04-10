@@ -384,7 +384,7 @@ class TestNodoGenerarComanda:
         result = nodo_generar_comanda(state)
 
         assert result["comanda"] is not None
-        assert result["comanda"]["referencia"].startswith("NEX-")
+        assert result["comanda"]["referencia"] == "PENDIENTE"
         assert result["comanda"]["total"] == 30000
         assert result["comanda"]["tipo_pedido"] == "llevar"
         assert result["etapa"] == "pagando"
@@ -402,25 +402,31 @@ class TestNodoGenerarComanda:
 
 
 class TestNodoPago:
-    def test_con_link_existente(self):
+    def test_online_avisa_enlace_pendiente(self):
+        """Para metodo_pago online (o vacío), avisa que el link llegará pronto."""
         state = _make_state(
-            comanda={"referencia": "NEX-1234", "total": 25000},
-            link_pago="https://checkout.wompi.co/p/?real-link",
-            messages=[HumanMessage(content="ok")],
-        )
-        result = nodo_pago(state)
-        assert "real-link" in result["messages"][-1].content
-        assert result["etapa"] == "finalizado"
-
-    def test_sin_link_genera_demo(self):
-        state = _make_state(
-            comanda={"referencia": "NEX-ABCD", "total": 25000},
+            comanda={"referencia": "PENDIENTE", "total": 25000},
+            metodo_pago="online",
             messages=[HumanMessage(content="ok")],
         )
         result = nodo_pago(state)
         last_msg = result["messages"][-1].content
-        assert "wompi.co" in last_msg
-        assert "NEX-ABCD" in last_msg
+        assert "enlace de pago" in last_msg.lower()
+        assert result["etapa"] == "finalizado"
+        # El link de pago NO se genera en el nodo — lo envía el webhook
+        assert result.get("link_pago") is None
+
+    def test_caja_confirma_sin_enlace(self):
+        """Para metodo_pago caja, envía confirmación sin generar link Wompi."""
+        state = _make_state(
+            comanda={"referencia": "PENDIENTE", "total": 25000},
+            metodo_pago="caja",
+            messages=[HumanMessage(content="en caja")],
+        )
+        result = nodo_pago(state)
+        last_msg = result["messages"][-1].content
+        assert "pedido" in last_msg.lower()
+        assert "wompi.co" not in last_msg
         assert result["etapa"] == "finalizado"
 
 

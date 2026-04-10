@@ -1,6 +1,6 @@
 # Plan: Nexo MVP Backend — Starter Plan
 
-Migrar el prototipo CLI actual (LangGraph + OpenAI) a un backend **FastAPI** que recibe mensajes de WhatsApp vía **Twilio**, orquesta la conversación con **LangGraph**, persiste datos en **PostgreSQL**, genera comandas automáticas y gestiona cobros con **Wompi**. Cubre los 16 requerimientos funcionales del plan Starter.
+Migrar el prototipo CLI actual (LangGraph + OpenAI) a un backend **FastAPI** que recibe mensajes de WhatsApp vía **Twilio**, orquesta la conversación con **LangGraph**, persiste datos en **PostgreSQL**, genera comandas automáticas y gestiona cobros con **Wompi** (online) o en caja (llevar). El panel de administración Next.js es parte del plan Starter. Cubre los 22 requerimientos funcionales del plan Starter.
 
 ---
 
@@ -62,22 +62,50 @@ Migrar el prototipo CLI actual (LangGraph + OpenAI) a un backend **FastAPI** que
 
 ## Fase 4: Pagos y Comanda — RF-17, RF-18, RF-19, RF-13, RF-14 (depende de Fases 2 y 3)
 
-16. **Payment service** — `generar_link_pago(pedido)` via API Wompi sandbox. Evolucionar `generar_link_pago()` de `utils/order_utils.py` a llamada real
+16. **Payment service** — `generar_link_pago(referencia, total)` construye URL Wompi checkout. Evolucionar `generar_link_pago()` de `utils/order_utils.py` a llamada real
 17. **Webhook Wompi** `POST /webhooks/wompi` — Validar HMAC, procesar `transaction.updated`, si APPROVED: actualizar pedido→pagado, enviar confirmación + recibo por WhatsApp *(RF-18, RF-19)*
-18. **Comanda persistida** — Reusar `calcular_total()` y `generar_comanda()` de `utils/order_utils.py`, crear registros en `pedidos` + `items_pedido` con modificadores JSONB, ID legible "NEX-XXXX" *(RF-13, RF-14)*
+18. **Comanda persistida** — Crear registros en `pedidos` + `items_pedido` con modificadores JSONB, referencia secuencial `NEX-000001` via tabla `contadores`, incluir `metodo_pago` *(RF-13, RF-14)*
+19. **Modelo híbrido de pago** — Para pedidos "llevar": bot ofrece pagar en línea (Wompi) o en caja. Para "domicilio": siempre Wompi. Campo `metodo_pago: "online" | "caja"` en `AgentState`, `Pedido` y comanda. Link Wompi enviado solo para pagos online *(RF-17)*
 
-**Verificación:** Flujo end-to-end: WhatsApp → conversación → confirmar → link Wompi → pago sandbox → webhook → pedido pagado → recibo enviado
+**Verificación:** Flujo end-to-end: WhatsApp → conversación → confirmar → (llevar+caja → número pedido) | (online → link Wompi → pago sandbox → webhook → pedido pagado → recibo)
 
 ---
 
 ## Fase 5: Pulido y Edge Cases — RF-06, RF-10, RF-11
 
-19. **Tipos de pedido** — Detectar llevar/domicilio, solicitar dirección, validar cobertura contra lista de zonas *(RF-06)*
-20. **Estado de pedido completo** — Consulta con estados: pendiente → confirmado → pagado → preparando → en_camino → entregado
-21. **Escalamiento humano** — Marcar en DB, notificar (log por ahora), responder al cliente
-22. **Manejo de errores** — Mensajes vacíos/emojis/audios, timeout de 30 min, rate limiting básico por teléfono
+20. **Tipos de pedido** — Detectar llevar/domicilio, solicitar dirección, validar cobertura contra lista de zonas *(RF-06)*
+21. **Estado de pedido completo** — Consulta con estados: pendiente → confirmado → pagado → preparando → en_camino → entregado
+22. **Escalamiento humano** — Marcar en DB, notificar (log por ahora), responder al cliente
+23. **Manejo de errores** — Mensajes vacíos/emojis/audios, timeout de 30 min, rate limiting básico por teléfono
 
 **Verificación:** Tests de domicilio con validación de zona, consulta de estado, escalamiento, envío de audio rechazado
+
+---
+
+## Fase 6: Panel de Administración (Next.js) — RF-20, RF-21, RF-22, RF-23, RF-24
+
+**RF-20** — Dashboard de pedidos: lista paginada con filtros por estado, método de pago y fecha  
+**RF-21** — Gestión de estado: operador puede marcar pedido como preparando / listo / entregado via `PATCH /pedidos/{referencia}/estado`  
+**RF-22** — Gestión de menú: CRUD de productos, toggle disponibilidad, actualización de precio en tiempo real  
+**RF-23** — Autenticación de operadores: login con email/contraseña, JWT, protección de rutas  
+**RF-24** — Actualizaciones en tiempo real: polling cada 30 s (o WebSocket futuro) para reflejar nuevos pedidos sin recargar
+
+24. **Backend — Endpoints de administración:**
+    - `GET /admin/pedidos` — lista paginada con filtros
+    - `PATCH /pedidos/{referencia}/estado` ✅ ya implementado
+    - `GET /admin/menu`, `POST /admin/menu`, `PATCH /admin/menu/{id}`, `DELETE /admin/menu/{id}`
+    - `POST /auth/login`, `POST /auth/refresh` — JWT
+25. **Frontend Next.js (App Router):**
+    - `/login` — formulario de autenticación
+    - `/dashboard` — KPIs: pedidos hoy, ingresos, pedidos pendientes
+    - `/pedidos` — tabla con estados coloreados, actualización inline
+    - `/menu` — CRUD con modal de edición, toggle disponible/agotado
+26. **Despliegue:**
+    - Backend: Railway (FastAPI + PostgreSQL)
+    - Frontend: Vercel (Next.js)
+    - Variables de entorno sincronizadas entre ambos servicios
+
+**Verificación:** Login → dashboard → marcar pedido como preparando → ver cambio en WhatsApp (futura fase) → actualizar precio de ítem → verificar en siguiente pedido
 
 ---
 
@@ -105,7 +133,7 @@ Migrar el prototipo CLI actual (LangGraph + OpenAI) a un backend **FastAPI** que
 
 ## Excluido (Pro/Futuro)
 
-Canal web, pedidos agendados, recuperador de ventas, multi-estación, impresión ESC/POS, múltiples métodos de pago, movimientos de dinero, analítica, reseñas, panel admin Next.js, deploy Railway, multi-tenancy
+Canal web, pedidos agendados, recuperador de ventas, multi-estación, impresión ESC/POS, múltiples métodos de pago, movimientos de dinero, analítica, reseñas, deploy Railway, multi-tenancy
 
 ---
 

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.routers import whatsapp
+from app.routers import whatsapp, wompi, pedidos
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -28,6 +28,8 @@ app = FastAPI(
 
 # ── Routers ───────────────────────────────────────────────────────────────
 app.include_router(whatsapp.router)
+app.include_router(wompi.router)
+app.include_router(pedidos.router)
 
 
 @app.get("/health", tags=["infra"])
