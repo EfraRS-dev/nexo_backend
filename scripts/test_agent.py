@@ -4,7 +4,7 @@ Script de prueba del agente Nexo — Opción B (REPL sin servidor HTTP).
 Uso:
     python scripts/test_agent.py
 
-Requiere OPENAI_API_KEY en .env y Docker corriendo (postgres).
+Requiere conexión a modelos y Docker corriendo (postgres).
 Escribe 'salir' para terminar la sesión.
 """
 import os
@@ -47,6 +47,7 @@ def main() -> int:
         "intencion": "",
         "tipo_pedido": "",
         "direccion_entrega": None,
+        "metodo_pago": "",
         "comanda": None,
         "link_pago": None,
         "telefono_cliente": telefono,

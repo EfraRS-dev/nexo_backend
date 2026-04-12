@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # LLM
     openai_api_key: str = ""
+    openrouter_api_key: str = ""
     ai_model: str = "gpt-4o-mini"
     max_input_chars: int = 360
     max_output_tokens: int = 800

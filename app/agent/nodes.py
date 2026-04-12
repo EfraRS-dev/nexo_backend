@@ -2,7 +2,7 @@
 Nodos del grafo LangGraph de Nexo.
 
 Cada función recibe AgentState, realiza su trabajo y devuelve
-un dict con los campos de estado que cambian (merge parcial).
+un dict con los campos de estado que cambian.
 """
 from __future__ import annotations
 
@@ -32,15 +32,34 @@ _llm: ChatOpenAI | None = None
 _llm_json: ChatOpenAI | None = None
 _llm_classifier: ChatOpenAI | None = None
 
-# Modelos que soportan response_format json_object
+# Modelos OpenAI que soportan response_format json_object
 _JSON_MODE_MODELS = ("gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125")
+
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _base_llm_kwargs() -> dict:
+    """Devuelve los kwargs base (api_key, base_url) según el proveedor configurado."""
+    if settings.openrouter_api_key:
+        return {
+            "api_key": settings.openrouter_api_key,
+            "base_url": _OPENROUTER_BASE_URL,
+        }
+    return {"api_key": settings.openai_api_key}
+
+
+def _supports_json_mode() -> bool:
+    """Sólo los modelos OpenAI conocidos soportan response_format json_object."""
+    if settings.openrouter_api_key:
+        return False
+    return any(settings.ai_model.startswith(m) for m in _JSON_MODE_MODELS)
 
 
 def _get_llm() -> ChatOpenAI:
     global _llm
     if _llm is None:
         _llm = ChatOpenAI(
-            api_key=settings.openai_api_key,
+            **_base_llm_kwargs(),
             model=settings.ai_model,
             temperature=0.3,
             max_tokens=settings.max_output_tokens,
@@ -52,16 +71,13 @@ def _get_llm_json() -> ChatOpenAI:
     """LLM para nodo_conversar: activa json_object mode en modelos que lo soportan."""
     global _llm_json
     if _llm_json is None:
-        supports_json_mode = any(
-            settings.ai_model.startswith(m) for m in _JSON_MODE_MODELS
-        )
         kwargs: dict = dict(
-            api_key=settings.openai_api_key,
+            **_base_llm_kwargs(),
             model=settings.ai_model,
             temperature=0.1,
             max_tokens=settings.max_output_tokens,
         )
-        if supports_json_mode:
+        if _supports_json_mode():
             kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
         _llm_json = ChatOpenAI(**kwargs)
     return _llm_json
@@ -71,7 +87,7 @@ def _get_classifier_llm() -> ChatOpenAI:
     global _llm_classifier
     if _llm_classifier is None:
         _llm_classifier = ChatOpenAI(
-            api_key=settings.openai_api_key,
+            **_base_llm_kwargs(),
             model=settings.ai_model,
             temperature=0.0,
             max_tokens=5,
