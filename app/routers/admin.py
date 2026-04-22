@@ -25,6 +25,7 @@ from app.models.menu import Menu
 from app.models.operador import Operador
 from app.models.pedido import Pedido
 from app.routers.auth import get_current_operador
+from app.cache import invalidar_menu
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ def crear_item_menu(
     db.add(item)
     db.commit()
     db.refresh(item)
+    invalidar_menu()
     logger.info("Ítem menú creado: %s (%s)", item.nombre, item.id)
     return item
 
@@ -238,6 +240,7 @@ def actualizar_item_menu(
 
     db.commit()
     db.refresh(item)
+    invalidar_menu()
     logger.info("Ítem menú actualizado: %s (%s)", item.nombre, item_id)
     return item
 
@@ -257,4 +260,5 @@ def eliminar_item_menu(
         )
     db.delete(item)
     db.commit()
+    invalidar_menu()
     logger.info("Ítem menú eliminado: %s", item_id)

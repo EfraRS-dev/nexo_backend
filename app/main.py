@@ -12,6 +12,7 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+logging.getLogger("twilio.http_client").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

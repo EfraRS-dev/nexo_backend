@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Base de datos
     database_url: str = "postgresql://nexo:nexo_dev@localhost:5432/nexo_db"
 
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+    cache_menu_ttl: int = 300   # segundos — TTL del menú formateado
+    cache_faq_ttl: int = 3600  # segundos — TTL de respuestas FAQ
+
     # Twilio
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

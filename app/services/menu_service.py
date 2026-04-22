@@ -4,6 +4,8 @@ Servicio de menú: consultas a la tabla `menu` en PostgreSQL.
 from sqlalchemy.orm import Session
 from app.models.menu import Menu
 from app.utils.menu_utils import formatear_menu
+from app.cache import cache_get, cache_set, menu_cache_key
+from app.config import settings
 
 
 def obtener_menu(db: Session, restaurante_id: str = "default") -> list[Menu]:
@@ -16,8 +18,14 @@ def obtener_menu(db: Session, restaurante_id: str = "default") -> list[Menu]:
 
 
 def obtener_menu_formateado(db: Session, restaurante_id: str = "default") -> str:
+    key = menu_cache_key(restaurante_id)
+    cached = cache_get(key)
+    if cached is not None:
+        return cached
     items = obtener_menu(db, restaurante_id)
-    return formatear_menu(items)
+    resultado = formatear_menu(items)
+    cache_set(key, resultado, settings.cache_menu_ttl)
+    return resultado
 
 
 def buscar_producto_por_slug(db: Session, slug: str) -> Menu | None:

@@ -21,6 +21,7 @@ from app.agent.prompts import (
     _ZONAS_TEXTO,
 )
 from app.agent.state import AgentState
+from app.cache import cache_get, cache_set, faq_cache_key
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,13 @@ def nodo_faq(state: AgentState, menu_texto: str = "") -> dict:
         "",
     )
 
+    key = faq_cache_key(ultimo_mensaje)
+    cached = cache_get(key)
+    if cached is not None:
+        return {
+            "messages": state["messages"] + [AIMessage(content=cached)],
+        }
+
     response = _get_llm().invoke([
         SystemMessage(content=FAQ_PROMPT.format(
             menu=menu_texto or "(menú no disponible)",
@@ -269,8 +277,11 @@ def nodo_faq(state: AgentState, menu_texto: str = "") -> dict:
         HumanMessage(content=ultimo_mensaje),
     ])
 
+    respuesta = response.content.strip()
+    cache_set(key, respuesta, settings.cache_faq_ttl)
+
     return {
-        "messages": state["messages"] + [AIMessage(content=response.content.strip())],
+        "messages": state["messages"] + [AIMessage(content=respuesta)],
     }
 
 
