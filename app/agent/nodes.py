@@ -10,6 +10,7 @@ import json
 import logging
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from app.agent.prompts import (
@@ -101,7 +102,14 @@ def _get_classifier_llm() -> ChatOpenAI:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _repair_json(raw: str, state: AgentState) -> dict:
+def _callbacks_from_config(config: RunnableConfig | None) -> list:
+    """Extrae callbacks del RunnableConfig de LangGraph (vacío si no hay config)."""
+    if config is None:
+        return []
+    return config.get("callbacks") or []
+
+
+def _repair_json(raw: str, state: AgentState, callbacks: list | None = None) -> dict:
     """Llama al LLM una vez más para convertir una respuesta en texto plano al JSON requerido."""
     logger.info("Intentando reparar respuesta no-JSON...")
     tipo_actual = state.get("tipo_pedido", "")
@@ -116,10 +124,13 @@ def _repair_json(raw: str, state: AgentState) -> dict:
         '"direccion_entrega", "pedido_listo", "esperando_confirmacion".'
     )
     try:
-        repair_response = _get_llm_json().invoke([
-            SystemMessage(content="Eres un convertidor de texto a JSON. Responde SOLO con el objeto JSON."),
-            HumanMessage(content=full_repair),
-        ])
+        repair_response = _get_llm_json().invoke(
+            [
+                SystemMessage(content="Eres un convertidor de texto a JSON. Responde SOLO con el objeto JSON."),
+                HumanMessage(content=full_repair),
+            ],
+            config={"callbacks": callbacks or []},
+        )
         text = repair_response.content.strip()
         if text.startswith("```"):
             parts = text.split("```")
@@ -142,7 +153,7 @@ def _repair_json(raw: str, state: AgentState) -> dict:
         }
 
 
-def _parse_llm_json(raw: str, state: AgentState) -> dict:
+def _parse_llm_json(raw: str, state: AgentState, callbacks: list | None = None) -> dict:
     """Parsea la respuesta JSON del LLM; si falla intenta reparación automática."""
     text = raw.strip()
     if text.startswith("```"):
@@ -154,14 +165,14 @@ def _parse_llm_json(raw: str, state: AgentState) -> dict:
         return json.loads(text)
     except json.JSONDecodeError:
         logger.warning("LLM devolvió respuesta no-JSON, reparando... %s", raw[:80])
-        return _repair_json(raw, state)
+        return _repair_json(raw, state, callbacks)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NODO 1 — Clasificar intención
 # ─────────────────────────────────────────────────────────────────────────────
 
-def nodo_clasificar(state: AgentState) -> dict:
+def nodo_clasificar(state: AgentState, config: RunnableConfig = None) -> dict:
     """
     Clasifica la intención del último mensaje del cliente.
     RF-08, RF-10, RF-11 (punto de entrada para FAQ, estado y escalamiento).
@@ -175,10 +186,14 @@ def nodo_clasificar(state: AgentState) -> dict:
     if state.get("items") or state.get("etapa") in ("confirmando", "pagando"):
         return {"intencion": "pedir"}
 
-    response = _get_classifier_llm().invoke([
-        SystemMessage(content=CLASSIFICATION_PROMPT),
-        HumanMessage(content=ultimo_mensaje),
-    ])
+    callbacks = _callbacks_from_config(config)
+    response = _get_classifier_llm().invoke(
+        [
+            SystemMessage(content=CLASSIFICATION_PROMPT),
+            HumanMessage(content=ultimo_mensaje),
+        ],
+        config={"callbacks": callbacks},
+    )
 
     intencion = response.content.strip().lower()
     if intencion not in ("pedir", "faq", "estado_pedido", "escalamiento"):
@@ -191,7 +206,7 @@ def nodo_clasificar(state: AgentState) -> dict:
 # NODO 2 — Conversar (tomar el pedido)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
+def nodo_conversar(state: AgentState, config: RunnableConfig = None, menu_texto: str = "") -> dict:
     """
     Mantiene la conversación de pedido con el cliente.
     Lee el menú del parámetro menu_texto (inyectado por el grafo o el webhook).
@@ -203,11 +218,13 @@ def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
         zonas=_ZONAS_TEXTO,
     )
 
+    callbacks = _callbacks_from_config(config)
     response = _get_llm_json().invoke(
-        [SystemMessage(content=system)] + state["messages"]
+        [SystemMessage(content=system)] + state["messages"],
+        config={"callbacks": callbacks},
     )
 
-    data = _parse_llm_json(response.content, state)
+    data = _parse_llm_json(response.content, state, callbacks)
 
     # Use `or ""` to handle both missing key AND null value from LLM
     respuesta_texto = data.get("respuesta") or ""
@@ -255,7 +272,7 @@ def nodo_confirmar(state: AgentState) -> dict:
 # NODO 4 — FAQ
 # ─────────────────────────────────────────────────────────────────────────────
 
-def nodo_faq(state: AgentState, menu_texto: str = "") -> dict:
+def nodo_faq(state: AgentState, config: RunnableConfig = None, menu_texto: str = "") -> dict:
     """Responde preguntas frecuentes del restaurante. RF-08."""
     ultimo_mensaje = next(
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
@@ -269,13 +286,17 @@ def nodo_faq(state: AgentState, menu_texto: str = "") -> dict:
             "messages": state["messages"] + [AIMessage(content=cached)],
         }
 
-    response = _get_llm().invoke([
-        SystemMessage(content=FAQ_PROMPT.format(
-            menu=menu_texto or "(menú no disponible)",
-            restaurante=settings.restaurante_nombre,
-        )),
-        HumanMessage(content=ultimo_mensaje),
-    ])
+    callbacks = _callbacks_from_config(config)
+    response = _get_llm().invoke(
+        [
+            SystemMessage(content=FAQ_PROMPT.format(
+                menu=menu_texto or "(menú no disponible)",
+                restaurante=settings.restaurante_nombre,
+            )),
+            HumanMessage(content=ultimo_mensaje),
+        ],
+        config={"callbacks": callbacks},
+    )
 
     respuesta = response.content.strip()
     cache_set(key, respuesta, settings.cache_faq_ttl)

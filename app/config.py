@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     restaurante_nombre: str = "Tu Restaurante"
 
+    # Langfuse (Observabilidad LLM)
+    # Obtén tus claves en https://cloud.langfuse.com → Settings → API Keys
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"  # cambia si usas instancia self-hosted
+
     # JWT / Admin
     secret_key: str = "nexo-dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
