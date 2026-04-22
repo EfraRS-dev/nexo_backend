@@ -34,5 +34,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     restaurante_nombre: str = "Tu Restaurante"
 
+    # JWT / Admin
+    secret_key: str = "nexo-dev-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 480  # 8 horas
+    admin_email: str = "admin@nexo.app"
+    admin_password: str = ""  # Si se define, se crea el operador al iniciar
+
 
 settings = Settings()

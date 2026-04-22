@@ -1,6 +1,26 @@
 """Prompts del agente Nexo."""
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ZONAS DE COBERTURA PARA DOMICILIO
+# Lista de barrios/sectores cubiertos (usado en SYSTEM_PROMPT y en validación)
+# ─────────────────────────────────────────────────────────────────────────────
+
+ZONAS_COBERTURA: list[str] = [
+    "el centro",
+    "la candelaria",
+    "chapinero",
+    "la soledad",
+    "teusaquillo",
+    "barrios unidos",
+    "galerías",
+    "palermo",
+    "la esperanza",
+    "san victorino",
+]
+
+_ZONAS_TEXTO = ", ".join(z.title() for z in ZONAS_COBERTURA)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PROMPT DE CLASIFICACIÓN DE INTENCIÓN
 # Usado por nodo_clasificar. Respuesta mínima: una sola palabra.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,6 +59,8 @@ INSTRUCCIONES:
    - Cantidad: "dos hamburguesas", "una porción", etc.
 3. Si un producto NO está disponible (❌), informa al cliente y ofrece la alternativa más cercana del menú.
 4. Pregunta si el pedido es para LLEVAR o a DOMICILIO. Si es domicilio, solicita la dirección.
+   Las zonas de cobertura para domicilio son: {zonas}. Si la dirección indicada NO corresponde
+   a ninguna de estas zonas, informa amablemente que no cubrimos ese sector y sugiere recoger en tienda.
 5. Cuando el cliente haya terminado de pedir, presenta el resumen completo con el total a pagar y solicita confirmación explícita ("¿Confirmas tu pedido?" o frases similares).
 6. MÉTODO DE PAGO (solo aplica si tipo_pedido == "llevar"):
    - Después de recibir la confirmación del pedido, pregunta cómo prefiere pagar:

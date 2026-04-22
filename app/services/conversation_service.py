@@ -119,3 +119,25 @@ def escalar_conversacion(db: Session, conversacion: Conversacion) -> None:
     conversacion.estado = "escalada"
     conversacion.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+
+def expirar_conversacion(db: Session, conversacion: Conversacion) -> None:
+    """Marca la conversación como expirada (timeout de inactividad)."""
+    conversacion.estado = "expirada"
+    conversacion.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    logger.info("Conversación %s expirada por inactividad", conversacion.id)
+
+
+def hay_timeout_conversacion(conversacion: Conversacion, timeout_min: int = 30) -> bool:
+    """
+    Retorna True si la conversación lleva más de `timeout_min` minutos sin actividad.
+    Una conversación sin `updated_at` (o con valor no-datetime) se considera activa.
+    """
+    updated = conversacion.updated_at
+    if not updated or not isinstance(updated, datetime):
+        return False
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - updated
+    return delta.total_seconds() > timeout_min * 60

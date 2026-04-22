@@ -122,3 +122,17 @@ def marcar_pedido_pagado(db: Session, pedido: Pedido) -> None:
     db.commit()
     logger.info("Pedido %s marcado como pagado", pedido.referencia)
 
+
+def obtener_ultimo_pedido(db: Session, cliente_id: str) -> Pedido | None:
+    """
+    Retorna el pedido más reciente del cliente (cualquier estado).
+    Usado por el webhook para poblar state["comanda"] cuando el cliente
+    pregunta por el estado de su pedido en una conversación nueva.
+    """
+    return (
+        db.query(Pedido)
+        .filter(Pedido.cliente_id == cliente_id)
+        .order_by(Pedido.created_at.desc())
+        .first()
+    )
+

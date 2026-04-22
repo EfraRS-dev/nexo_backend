@@ -371,3 +371,312 @@ class TestWebhookWhatsapp:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. TESTS DE FASE 5 — Edge cases, media, timeout, rate limit, zona
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestFase5EdgeCases:
+    """Tests para las funcionalidades nuevas de Fase 5."""
+
+    # ── Delivery utils ────────────────────────────────────────────────
+
+    def test_zona_valida_detectada(self):
+        from app.utils.delivery_utils import validar_zona_domicilio
+        assert validar_zona_domicilio("Calle 10 # 5-20, El Centro") is True
+
+    def test_zona_valida_chapinero(self):
+        from app.utils.delivery_utils import validar_zona_domicilio
+        assert validar_zona_domicilio("Carrera 7 # 52-40 Chapinero") is True
+
+    def test_zona_fuera_de_cobertura(self):
+        from app.utils.delivery_utils import validar_zona_domicilio
+        assert validar_zona_domicilio("Autopista Norte km 12, Usaquén") is False
+
+    def test_zona_direccion_vacia(self):
+        from app.utils.delivery_utils import validar_zona_domicilio
+        assert validar_zona_domicilio("") is False
+        assert validar_zona_domicilio("   ") is False
+
+    def test_zona_custom_lista(self):
+        from app.utils.delivery_utils import validar_zona_domicilio
+        assert validar_zona_domicilio("Carrera 1 en Zona Norte", ["zona norte"]) is True
+        assert validar_zona_domicilio("Carrera 1 en Zona Sur", ["zona norte"]) is False
+
+    # ── Timeout de conversación ───────────────────────────────────────
+
+    def test_timeout_conversacion_activa(self):
+        from app.services.conversation_service import hay_timeout_conversacion
+        from datetime import timedelta
+        conv = MagicMock()
+        conv.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        assert hay_timeout_conversacion(conv, timeout_min=30) is False
+
+    def test_timeout_conversacion_expirada(self):
+        from app.services.conversation_service import hay_timeout_conversacion
+        from datetime import timedelta
+        conv = MagicMock()
+        conv.updated_at = datetime.now(timezone.utc) - timedelta(minutes=45)
+        assert hay_timeout_conversacion(conv, timeout_min=30) is True
+
+    def test_timeout_conversacion_sin_fecha(self):
+        from app.services.conversation_service import hay_timeout_conversacion
+        conv = MagicMock()
+        conv.updated_at = None
+        assert hay_timeout_conversacion(conv) is False
+
+    def test_timeout_conversacion_updated_at_no_datetime(self):
+        """MagicMock como updated_at no debe lanzar excepción."""
+        from app.services.conversation_service import hay_timeout_conversacion
+        conv = MagicMock()
+        # updated_at es un MagicMock (no datetime) — debe retornar False sin error
+        assert hay_timeout_conversacion(conv) is False
+
+    # ── Rate limiting ─────────────────────────────────────────────────
+
+    def test_rate_limit_permite_mensajes_normales(self):
+        import app.routers.whatsapp as wa
+        wa._rate_limits.clear()
+        telefono = "+573009990001"
+        for _ in range(5):
+            assert wa._esta_bajo_limite(telefono) is True
+
+    def test_rate_limit_bloquea_tras_exceder(self):
+        import app.routers.whatsapp as wa
+        wa._rate_limits.clear()
+        telefono = "+573009990002"
+        for _ in range(wa._RATE_LIMIT_PER_MIN):
+            wa._esta_bajo_limite(telefono)
+        # El siguiente debe ser bloqueado
+        assert wa._esta_bajo_limite(telefono) is False
+
+    # ── Webhook: mensajes de audio/media ─────────────────────────────
+
+    class _WebhookFixtures:
+        @pytest.fixture
+        def client(self):
+            from fastapi.testclient import TestClient
+            from app.main import app
+            return TestClient(app)
+
+        @pytest.fixture(autouse=True)
+        def skip_twilio_signature(self):
+            with patch("app.routers.whatsapp._validar_firma_twilio", return_value=True):
+                yield
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        return TestClient(app)
+
+    @pytest.fixture(autouse=True)
+    def skip_twilio_signature(self):
+        with patch("app.routers.whatsapp._validar_firma_twilio", return_value=True):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def inline_queue(self):
+        """Procesamiento inline + limpia rate limits entre tests de webhook."""
+        import app.routers.whatsapp as wa
+
+        async def mock_ensure_worker(telefono: str) -> None:
+            class _InlineQueue:
+                async def put(self, mensaje: str) -> None:
+                    db = MagicMock()
+                    await wa._procesar_mensaje(db, telefono, mensaje)
+
+                def task_done(self) -> None:
+                    pass
+
+            wa._phone_queues[telefono] = _InlineQueue()
+
+        wa._rate_limits.clear()
+        with patch.object(wa, "_ensure_worker", mock_ensure_worker):
+            wa._phone_queues.clear()
+            yield
+            wa._phone_queues.clear()
+        wa._rate_limits.clear()
+
+    @patch("app.routers.whatsapp.enviar_mensaje")
+    def test_audio_sin_texto_responde_indicacion(self, mock_enviar, client):
+        """Cuando llega un audio (NumMedia=1, Body vacío) informa que solo procesa texto."""
+        response = client.post(
+            "/webhooks/whatsapp",
+            data={"Body": "", "From": "whatsapp:+573001234567", "NumMedia": "1"},
+        )
+        assert response.status_code == 200
+        texto = mock_enviar.call_args[0][1]
+        assert "texto" in texto.lower()
+
+    @patch("app.routers.whatsapp.enviar_mensaje")
+    @patch("app.routers.whatsapp.construir_grafo")
+    @patch("app.routers.whatsapp.obtener_menu_formateado")
+    @patch("app.routers.whatsapp.obtener_o_crear_conversacion")
+    @patch("app.routers.whatsapp.obtener_o_crear_cliente")
+    @patch("app.routers.whatsapp.guardar_mensajes")
+    @patch("app.routers.whatsapp.obtener_ultimo_pedido")
+    def test_audio_con_texto_procesa_texto(
+        self, mock_ultimo, mock_guardar, mock_cliente, mock_conv,
+        mock_menu, mock_grafo, mock_enviar, client
+    ):
+        """Si hay Body con texto y NumMedia>0, el texto se procesa (audio ignorado)."""
+        mock_cliente.return_value = MagicMock(id="c1")
+        mock_conv.return_value = MagicMock(id="conv-1", mensajes=[])
+        mock_menu.return_value = "menu"
+        mock_ultimo.return_value = None
+        mock_grafo.return_value.invoke.return_value = {
+            "messages": [AIMessage(content="Hola")],
+            "etapa": "conversando",
+        }
+
+        response = client.post(
+            "/webhooks/whatsapp",
+            data={"Body": "Quiero una hamburguesa", "From": "whatsapp:+573001234567", "NumMedia": "1"},
+        )
+        assert response.status_code == 200
+        mock_grafo.return_value.invoke.assert_called_once()
+
+    @patch("app.routers.whatsapp.enviar_mensaje")
+    def test_rate_limit_webhook_responde_amable(self, mock_enviar, client):
+        """Cuando se supera el rate limit, el webhook responde 200 con mensaje cortés."""
+        import app.routers.whatsapp as wa
+        telefono = "+573001111222"
+        # Llenar el bucket
+        for _ in range(wa._RATE_LIMIT_PER_MIN):
+            wa._esta_bajo_limite(telefono)
+
+        response = client.post(
+            "/webhooks/whatsapp",
+            data={"Body": "Mensaje extra", "From": f"whatsapp:{telefono}"},
+        )
+        assert response.status_code == 200
+        texto = mock_enviar.call_args[0][1]
+        assert "espera" in texto.lower()
+
+    # ── obtener_ultimo_pedido ─────────────────────────────────────────
+
+    def test_obtener_ultimo_pedido_retorna_mas_reciente(self):
+        from app.services.order_service import obtener_ultimo_pedido
+
+        pedido_reciente = MagicMock()
+        pedido_reciente.referencia = "NEX-000002"
+
+        mock_db = MagicMock()
+        (mock_db.query.return_value
+            .filter.return_value
+            .order_by.return_value
+            .first.return_value) = pedido_reciente
+
+        resultado = obtener_ultimo_pedido(mock_db, "cliente-uuid")
+        assert resultado.referencia == "NEX-000002"
+
+    def test_obtener_ultimo_pedido_sin_pedidos(self):
+        from app.services.order_service import obtener_ultimo_pedido
+
+        mock_db = MagicMock()
+        (mock_db.query.return_value
+            .filter.return_value
+            .order_by.return_value
+            .first.return_value) = None
+
+        assert obtener_ultimo_pedido(mock_db, "cliente-uuid") is None
+
+    # ── Conversation service: expirar_conversacion ────────────────────
+
+    def test_expirar_conversacion_cambia_estado(self):
+        from app.services.conversation_service import expirar_conversacion
+
+        mock_db = MagicMock()
+        conv = MagicMock()
+        expirar_conversacion(mock_db, conv)
+
+        assert conv.estado == "expirada"
+        mock_db.commit.assert_called_once()
+
+    # ── Webhook: zona fuera de cobertura ──────────────────────────────
+
+    @patch("app.routers.whatsapp.enviar_mensaje")
+    @patch("app.routers.whatsapp.construir_grafo")
+    @patch("app.routers.whatsapp.obtener_menu_formateado")
+    @patch("app.routers.whatsapp.obtener_o_crear_conversacion")
+    @patch("app.routers.whatsapp.obtener_o_crear_cliente")
+    @patch("app.routers.whatsapp.guardar_mensajes")
+    @patch("app.routers.whatsapp.crear_pedido")
+    @patch("app.routers.whatsapp.obtener_ultimo_pedido")
+    def test_webhook_rechaza_domicilio_fuera_de_zona(
+        self, mock_ultimo, mock_crear, mock_guardar, mock_cliente, mock_conv,
+        mock_menu, mock_grafo, mock_enviar, client
+    ):
+        """Un pedido domicilio con dirección fuera de cobertura no persiste y envía rechazo."""
+        mock_cliente.return_value = MagicMock(id="c1")
+        mock_conv_obj = MagicMock(id="conv-1", mensajes=[])
+        mock_conv.return_value = mock_conv_obj
+        mock_menu.return_value = "menu"
+        mock_ultimo.return_value = None
+        mock_grafo.return_value.invoke.return_value = {
+            "messages": [AIMessage(content="Pedido listo")],
+            "etapa": "finalizado",
+            "tipo_pedido": "domicilio",
+            "direccion_entrega": "Autopista Norte km 20, Chía",  # fuera de cobertura
+            "metodo_pago": "online",
+        }
+
+        client.post(
+            "/webhooks/whatsapp",
+            data={"Body": "confirmo", "From": "whatsapp:+573001234567"},
+        )
+
+        # El pedido NO debe haberse creado
+        mock_crear.assert_not_called()
+        # Debe haberse enviado un mensaje de rechazo
+        textos = [call[0][1] for call in mock_enviar.call_args_list]
+        assert any("cobertura" in t.lower() or "sector" in t.lower() for t in textos)
+
+    # ── Webhook: comanda cargada desde DB para nueva conversación ─────
+
+    @patch("app.routers.whatsapp.enviar_mensaje")
+    @patch("app.routers.whatsapp.construir_grafo")
+    @patch("app.routers.whatsapp.obtener_menu_formateado")
+    @patch("app.routers.whatsapp.obtener_o_crear_conversacion")
+    @patch("app.routers.whatsapp.obtener_o_crear_cliente")
+    @patch("app.routers.whatsapp.guardar_mensajes")
+    @patch("app.routers.whatsapp.obtener_ultimo_pedido")
+    def test_webhook_carga_ultimo_pedido_para_estado(
+        self, mock_ultimo, mock_guardar, mock_cliente, mock_conv,
+        mock_menu, mock_grafo, mock_enviar, client
+    ):
+        """En una conversación nueva, el último pedido DB se inyecta en state['comanda']."""
+        mock_cliente.return_value = MagicMock(id="c1")
+        mock_conv_obj = MagicMock(id="conv-1", mensajes=[])
+        mock_conv.return_value = mock_conv_obj
+        mock_menu.return_value = "menu"
+
+        pedido_db = MagicMock()
+        pedido_db.referencia = "NEX-000005"
+        pedido_db.estado = "preparando"
+        pedido_db.total = 25000
+        pedido_db.tipo = "llevar"
+        pedido_db.direccion_entrega = None
+        mock_ultimo.return_value = pedido_db
+
+        # Capturar el estado que se pasa al grafo
+        captured_state = {}
+        def fake_invoke(state):
+            captured_state.update(state)
+            return {
+                "messages": [AIMessage(content="Tu pedido está en preparación")],
+                "etapa": "conversando",
+            }
+        mock_grafo.return_value.invoke.side_effect = fake_invoke
+
+        client.post(
+            "/webhooks/whatsapp",
+            data={"Body": "¿Cómo va mi pedido?", "From": "whatsapp:+573001234567"},
+        )
+
+        # El state pasado al grafo debe tener comanda con datos del DB
+        assert captured_state.get("comanda") is not None
+        assert captured_state["comanda"]["referencia"] == "NEX-000005"
+        assert captured_state["comanda"]["estado"] == "preparando"

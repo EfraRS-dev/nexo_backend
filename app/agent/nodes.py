@@ -18,6 +18,7 @@ from app.agent.prompts import (
     MSG_ESCALAMIENTO,
     MSG_ESTADO_SIN_PEDIDO,
     SYSTEM_PROMPT,
+    _ZONAS_TEXTO,
 )
 from app.agent.state import AgentState
 from app.config import settings
@@ -198,6 +199,7 @@ def nodo_conversar(state: AgentState, menu_texto: str = "") -> dict:
     system = SYSTEM_PROMPT.format(
         menu=menu_texto or "(menú no disponible)",
         restaurante=settings.restaurante_nombre,
+        zonas=_ZONAS_TEXTO,
     )
 
     response = _get_llm_json().invoke(
