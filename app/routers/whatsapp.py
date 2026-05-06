@@ -39,7 +39,7 @@ from app.services.order_service import crear_pedido, obtener_ultimo_pedido
 from app.utils.delivery_utils import validar_zona_domicilio
 from app.agent.graph import construir_grafo
 from app.agent.state import AgentState
-from app.observability import make_langfuse_handler
+from app.observability import make_langfuse_handler, langfuse_context
 from app.utils.input_utils import limitar_entrada_usuario
 
 from langchain_core.messages import HumanMessage
@@ -296,14 +296,15 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
 
     # ── 8. Ejecutar grafo ─────────────────────────────────────────────
     # Usar asyncio.to_thread para no bloquear el event loop durante la inferencia LLM
-    lf_handler = make_langfuse_handler(
-        session_id=conversacion.id,
-        user_id=telefono,
-        trace_name="whatsapp-message",
-    )
+    lf_handler = make_langfuse_handler()
     lf_config = {"callbacks": [lf_handler]} if lf_handler else {}
     try:
-        resultado = await asyncio.to_thread(grafo.invoke, estado, lf_config)
+        with langfuse_context(
+            session_id=str(conversacion.id),
+            user_id=telefono,
+            trace_name="whatsapp-message",
+        ):
+            resultado = await asyncio.to_thread(grafo.invoke, estado, lf_config)
     except Exception as exc:
         logger.error("Error ejecutando grafo para %s: %s", telefono, exc)
         await asyncio.to_thread(

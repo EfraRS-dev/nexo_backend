@@ -1,42 +1,43 @@
 """
-Observabilidad LLM con Langfuse.
+Observabilidad LLM con Langfuse 4.x.
 
-Si LANGFUSE_PUBLIC_KEY y LANGFUSE_SECRET_KEY están configurados en .env,
-make_langfuse_handler() retorna un CallbackHandler listo para LangChain/LangGraph.
-Si no están configurados (o langfuse no está instalado), retorna None y el
-sistema continúa sin tracing — degradación graciosa.
+En Langfuse 4.x el CallbackHandler ya no acepta secret_key/host/session_id/user_id
+en su constructor — esos datos se toman de las variables de entorno
+(LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL) y del context
+manager `propagate_attributes`.
 
 Uso en whatsapp.py:
-    from app.observability import make_langfuse_handler
-    handler = make_langfuse_handler(session_id=conv.id, user_id=telefono)
-    resultado = grafo.invoke(estado, {"callbacks": [handler]} if handler else {})
+    from app.observability import make_langfuse_handler, langfuse_context
 
-El handler se pasa al grafo y cada nodo lo recibe vía RunnableConfig, luego
-lo propaga a sus llamadas LLM con config={"callbacks": callbacks}.
+    handler = make_langfuse_handler()
+    lf_config = {"callbacks": [handler]} if handler else {}
+
+    with langfuse_context(session_id=conv.id, user_id=telefono, trace_name="whatsapp-message"):
+        resultado = await asyncio.to_thread(grafo.invoke, estado, lf_config)
+
+El context manager propaga session_id/user_id a todos los spans dentro del bloque,
+incluidos los que se ejecutan en el hilo secundario lanzado por asyncio.to_thread
+(contextvars se propagan automáticamente).
 """
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from contextlib import nullcontext
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def make_langfuse_handler(
-    session_id: str = "",
-    user_id: str = "",
-    trace_name: str = "nexo-agent",
-) -> Optional[object]:
+def make_langfuse_handler() -> Optional[object]:
     """
-    Crea un CallbackHandler de Langfuse con contexto de sesión y usuario.
+    Crea un CallbackHandler de Langfuse (Langfuse 4.x).
 
-    Args:
-        session_id: ID de la conversación — agrupa todos los turnos de un chat.
-        user_id:    Teléfono del cliente — identifica al usuario en Langfuse.
-        trace_name: Nombre de la traza raíz visible en el dashboard.
+    Las credenciales y el host se leen automáticamente de las variables de entorno:
+        LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
 
     Returns:
-        CallbackHandler listo para usar, o None si Langfuse no está disponible.
+        CallbackHandler listo para pasar en lf_config["callbacks"], o None si
+        Langfuse no está configurado o no está instalado.
     """
     try:
         from app.config import settings  # importación local para evitar ciclos
@@ -47,18 +48,8 @@ def make_langfuse_handler(
 
         from langfuse.langchain import CallbackHandler  # type: ignore
 
-        handler = CallbackHandler(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
-            session_id=session_id,
-            user_id=user_id,
-            trace_name=trace_name,
-            tags=["nexo", "whatsapp"],
-        )
-        logger.debug(
-            "Langfuse handler creado — session=%s user=%s", session_id, user_id
-        )
+        handler = CallbackHandler()
+        logger.debug("Langfuse CallbackHandler creado")
         return handler
 
     except ImportError:
@@ -67,3 +58,32 @@ def make_langfuse_handler(
     except Exception as exc:
         logger.warning("Error creando Langfuse handler: %s", exc)
         return None
+
+
+def langfuse_context(
+    session_id: str = "",
+    user_id: str = "",
+    trace_name: str = "nexo-agent",
+    tags: Optional[List[str]] = None,
+) -> Any:
+    """
+    Context manager que propaga atributos de traza (session_id, user_id, etc.)
+    a todos los spans creados dentro del bloque — incluidos los de hilos secundarios.
+
+    Si Langfuse no está disponible devuelve un nullcontext() inerte.
+
+    Uso:
+        with langfuse_context(session_id="...", user_id="...", trace_name="..."):
+            resultado = await asyncio.to_thread(grafo.invoke, estado, lf_config)
+    """
+    try:
+        from langfuse import propagate_attributes  # type: ignore
+
+        return propagate_attributes(
+            session_id=session_id or None,
+            user_id=user_id or None,
+            trace_name=trace_name or None,
+            tags=tags or ["nexo", "whatsapp"],
+        )
+    except Exception:
+        return nullcontext()

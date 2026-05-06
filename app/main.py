@@ -40,13 +40,66 @@ def _seed_admin() -> None:
         db.close()
 
 
+def _check_db() -> str:
+    """Verifica la conexión a PostgreSQL. Retorna 'ok' o el mensaje de error."""
+    try:
+        from sqlalchemy import text
+        from app.database import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return "ok"
+    except Exception as exc:
+        return str(exc)
+
+
+def _check_redis() -> str:
+    """Verifica la conexión a Redis. Retorna 'ok' o el mensaje de error."""
+    try:
+        import redis as redis_lib
+        r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=2)
+        r.ping()
+        return "ok"
+    except Exception as exc:
+        return str(exc)
+
+
+def _check_langfuse() -> str:
+    """Verifica que las claves de Langfuse estén configuradas."""
+    if settings.langfuse_public_key and settings.langfuse_secret_key:
+        return "ok"
+    return "not configured"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # ── Startup ───────────────────────────────────────────────────────────
     if settings.admin_password:
         _seed_admin()
+
+    db_status    = _check_db()
+    redis_status = _check_redis()
+    lf_status    = _check_langfuse()
+
+    sep = "─" * 54
+    logger.info(sep)
+    logger.info("  Nexo API  ·  %s", settings.restaurante_nombre)
+    logger.info(sep)
+    logger.info("  Model    : %s", settings.ai_model)
+    logger.info("  Base URL : %s", settings.base_url)
+    logger.info(sep)
+    logger.info("  PostgreSQL : %s", db_status)
+    logger.info("  Redis      : %s", redis_status)
+    logger.info("  Langfuse   : %s", lf_status)
+    logger.info(sep)
+
+    if db_status != "ok":
+        logger.error("PostgreSQL no disponible — el servidor puede no funcionar correctamente")
+    if redis_status != "ok":
+        logger.warning("Redis no disponible — caché deshabilitado")
+
     yield
-    # Shutdown
+    # ── Shutdown ──────────────────────────────────────────────────────────
+    logger.info("API detenida.")
 
 
 app = FastAPI(
