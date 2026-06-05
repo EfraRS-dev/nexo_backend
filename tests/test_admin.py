@@ -208,7 +208,7 @@ class TestAdminPedidos:
         result = listar_pedidos(
             estado=None, metodo_pago=None, fecha=None,
             page=1, page_size=20,
-            db=mock_db, _=mock_operador,
+            db=mock_db, operador=mock_operador,
         )
 
         assert result["total"] == 1
@@ -228,7 +228,7 @@ class TestAdminPedidos:
             listar_pedidos(
                 estado=None, metodo_pago=None, fecha="no-es-fecha",
                 page=1, page_size=20,
-                db=mock_db, _=mock_operador,
+                db=mock_db, operador=mock_operador,
             )
 
         assert exc_info.value.status_code == 400
@@ -243,7 +243,7 @@ class TestAdminPedidos:
         result = listar_pedidos(
             estado=None, metodo_pago=None, fecha=None,
             page=1, page_size=20,
-            db=mock_db, _=mock_operador,
+            db=mock_db, operador=mock_operador,
         )
 
         assert result["total"] == 0
@@ -275,7 +275,7 @@ class TestAdminMenu:
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [item]
 
-        result = listar_menu(db=mock_db, _=MagicMock(spec=Operador))
+        result = listar_menu(db=mock_db, operador=MagicMock(spec=Operador, restaurante_id="default"))
 
         assert len(result) == 1
 
@@ -291,7 +291,7 @@ class TestAdminMenu:
         result = crear_item_menu(
             body=CreateMenuItemRequest(slug="nueva-burger", nombre="Nueva Burger", precio=18000),
             db=mock_db,
-            _=MagicMock(spec=Operador),
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
         )
 
         mock_db.add.assert_called_once()
@@ -310,7 +310,7 @@ class TestAdminMenu:
             crear_item_menu(
                 body=CreateMenuItemRequest(slug="hamburguesa", nombre="Copy", precio=10000),
                 db=mock_db,
-                _=MagicMock(spec=Operador),
+                operador=MagicMock(spec=Operador, restaurante_id="default"),
             )
 
         assert exc_info.value.status_code == 409
@@ -327,7 +327,7 @@ class TestAdminMenu:
             item_id="item-001",
             body=UpdateMenuItemRequest(disponible=False),
             db=mock_db,
-            _=MagicMock(spec=Operador),
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
         )
 
         assert item.disponible is False
@@ -346,7 +346,7 @@ class TestAdminMenu:
                 item_id="no-existe",
                 body=UpdateMenuItemRequest(nombre="X"),
                 db=mock_db,
-                _=MagicMock(spec=Operador),
+                operador=MagicMock(spec=Operador, restaurante_id="default"),
             )
 
         assert exc_info.value.status_code == 404
@@ -359,7 +359,7 @@ class TestAdminMenu:
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = item
 
-        eliminar_item_menu(item_id="item-001", db=mock_db, _=MagicMock(spec=Operador))
+        eliminar_item_menu(item_id="item-001", db=mock_db, operador=MagicMock(spec=Operador, restaurante_id="default"))
 
         mock_db.delete.assert_called_once_with(item)
         mock_db.commit.assert_called_once()
@@ -373,6 +373,37 @@ class TestAdminMenu:
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
-            eliminar_item_menu(item_id="no-existe", db=mock_db, _=MagicMock(spec=Operador))
+            eliminar_item_menu(item_id="no-existe", db=mock_db, operador=MagicMock(spec=Operador, restaurante_id="default"))
 
         assert exc_info.value.status_code == 404
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 6. PERFIL DEL OPERADOR (/admin/me)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestPerfilOperador:
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_me_devuelve_nombre_del_restaurante(self, mock_obtener):
+        from app.routers.admin import obtener_perfil
+        from app.models.operador import Operador
+
+        mock_obtener.return_value = MagicMock(nombre="Kike's Plaza")
+        operador = MagicMock(spec=Operador, email="admin@nexo.app", restaurante_id="kikes")
+
+        result = obtener_perfil(db=MagicMock(), operador=operador)
+
+        assert result.restaurante_id == "kikes"
+        assert result.restaurante_nombre == "Kike's Plaza"
+        assert result.email == "admin@nexo.app"
+
+    @patch("app.routers.admin.obtener_restaurante", return_value=None)
+    def test_me_sin_restaurante_usa_id_como_fallback(self, mock_obtener):
+        from app.routers.admin import obtener_perfil
+        from app.models.operador import Operador
+
+        operador = MagicMock(spec=Operador, email="x@y.z", restaurante_id="huerfano")
+
+        result = obtener_perfil(db=MagicMock(), operador=operador)
+
+        assert result.restaurante_nombre == "huerfano"

@@ -8,7 +8,7 @@ from app.cache import cache_get, cache_set, menu_cache_key
 from app.config import settings
 
 
-def obtener_menu(db: Session, restaurante_id: str = "default") -> list[Menu]:
+def obtener_menu(db: Session, restaurante_id: str) -> list[Menu]:
     return (
         db.query(Menu)
         .filter(Menu.restaurante_id == restaurante_id)
@@ -17,7 +17,7 @@ def obtener_menu(db: Session, restaurante_id: str = "default") -> list[Menu]:
     )
 
 
-def obtener_menu_formateado(db: Session, restaurante_id: str = "default") -> str:
+def obtener_menu_formateado(db: Session, restaurante_id: str) -> str:
     key = menu_cache_key(restaurante_id)
     cached = cache_get(key)
     if cached is not None:
@@ -28,5 +28,9 @@ def obtener_menu_formateado(db: Session, restaurante_id: str = "default") -> str
     return resultado
 
 
-def buscar_producto_por_slug(db: Session, slug: str) -> Menu | None:
-    return db.query(Menu).filter(Menu.slug == slug).first()
+def buscar_producto_por_slug(db: Session, slug: str, restaurante_id: str) -> Menu | None:
+    return (
+        db.query(Menu)
+        .filter(Menu.slug == slug, Menu.restaurante_id == restaurante_id)
+        .first()
+    )

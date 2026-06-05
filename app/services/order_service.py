@@ -14,41 +14,55 @@ from sqlalchemy.orm import Session
 from app.models.item_pedido import ItemPedido
 from app.models.menu import Menu
 from app.models.pedido import Pedido
+from app.models.restaurante import Restaurante
 from app.services.menu_service import buscar_producto_por_slug
 
 logger = logging.getLogger(__name__)
 
 
-def _siguiente_numero_pedido(db: Session) -> int:
+def _siguiente_numero_pedido(db: Session, restaurante_id: str) -> int:
     """
-    Incrementa atómicamente el contador de pedidos y retorna el nuevo valor.
-    Inicializa la fila si no existe (idempotente).
+    Incrementa atómicamente el contador de pedidos del restaurante y retorna
+    el nuevo valor. Inicializa la fila si no existe (idempotente).
+    Cada restaurante tiene su propia secuencia: contador 'pedidos:{restaurante_id}'.
     """
+    nombre = f"pedidos:{restaurante_id}"
     db.execute(
         text(
-            "INSERT INTO contadores (nombre, valor) VALUES ('pedidos', 0)"
+            "INSERT INTO contadores (nombre, valor) VALUES (:nombre, 0)"
             " ON CONFLICT (nombre) DO NOTHING"
-        )
+        ),
+        {"nombre": nombre},
     )
     result = db.execute(
         text(
             "UPDATE contadores SET valor = valor + 1"
-            " WHERE nombre = 'pedidos' RETURNING valor"
-        )
+            " WHERE nombre = :nombre RETURNING valor"
+        ),
+        {"nombre": nombre},
     )
     return result.scalar()
 
 
-def crear_pedido(db: Session, comanda: dict, cliente_id: str) -> Pedido:
+def _prefijo_restaurante(db: Session, restaurante_id: str) -> str:
+    """Devuelve el prefijo (4 letras) del restaurante; fallback 'NEXO'."""
+    rest = db.query(Restaurante).filter(Restaurante.id == restaurante_id).first()
+    if rest and rest.prefijo:
+        return rest.prefijo
+    return "NEXO"
+
+
+def crear_pedido(db: Session, comanda: dict, cliente_id: str, restaurante_id: str) -> Pedido:
     """
     Crea registros en pedidos + items_pedido a partir del dict de comanda.
-    Asigna una referencia secuencial legible (NEX-000001).
+    Asigna una referencia secuencial legible por restaurante ({PREFIJO}-0001).
     Idempotente: si la referencia ya existe (y no es PENDIENTE), devuelve el pedido existente.
 
     Args:
         db: Sesión SQLAlchemy.
         comanda: Dict con items, total, tipo_pedido, direccion_entrega, metodo_pago.
         cliente_id: UUID del cliente.
+        restaurante_id: Tenant al que pertenece el pedido.
 
     Returns:
         Instancia de Pedido creada o ya existente.
@@ -64,12 +78,14 @@ def crear_pedido(db: Session, comanda: dict, cliente_id: str) -> Pedido:
             logger.info("Pedido %s ya existe — omitiendo creación", ref_actual)
             return existente
 
-    # Asignar referencia secuencial (formato NEX-000001, 6 dígitos)
-    numero = _siguiente_numero_pedido(db)
-    referencia = f"NEX-{numero:06d}"
+    # Asignar referencia secuencial por restaurante (formato KIKE-0001)
+    numero = _siguiente_numero_pedido(db, restaurante_id)
+    prefijo = _prefijo_restaurante(db, restaurante_id)
+    referencia = f"{prefijo}-{numero:04d}"
 
     pedido = Pedido(
         cliente_id=cliente_id,
+        restaurante_id=restaurante_id,
         referencia=referencia,
         estado="pendiente",
         tipo=comanda.get("tipo_pedido", "llevar"),
@@ -82,11 +98,17 @@ def crear_pedido(db: Session, comanda: dict, cliente_id: str) -> Pedido:
 
     for item in comanda.get("items", []):
         slug = item.get("id", "")
-        menu_item = buscar_producto_por_slug(db, slug) if slug else None
+        menu_item = buscar_producto_por_slug(db, slug, restaurante_id) if slug else None
 
         if menu_item is None:
             # Fallback: slug might already be the menu UUID (LLM error)
-            menu_item = db.query(Menu).filter(Menu.id == slug).first() if slug else None
+            menu_item = (
+                db.query(Menu)
+                .filter(Menu.id == slug, Menu.restaurante_id == restaurante_id)
+                .first()
+                if slug
+                else None
+            )
 
         if menu_item is None:
             # FK constraint on producto_id references menu.id (UUID) — skip
@@ -123,15 +145,20 @@ def marcar_pedido_pagado(db: Session, pedido: Pedido) -> None:
     logger.info("Pedido %s marcado como pagado", pedido.referencia)
 
 
-def obtener_ultimo_pedido(db: Session, cliente_id: str) -> Pedido | None:
+def obtener_ultimo_pedido(db: Session, cliente_id: str, restaurante_id: str) -> Pedido | None:
     """
-    Retorna el pedido más reciente del cliente (cualquier estado).
+    Retorna el pedido más reciente del cliente EN ESTE restaurante (cualquier estado).
+    El cliente es global (un teléfono = una persona), por lo que filtramos por
+    restaurante_id para no mezclar pedidos de distintos tenants.
     Usado por el webhook para poblar state["comanda"] cuando el cliente
     pregunta por el estado de su pedido en una conversación nueva.
     """
     return (
         db.query(Pedido)
-        .filter(Pedido.cliente_id == cliente_id)
+        .filter(
+            Pedido.cliente_id == cliente_id,
+            Pedido.restaurante_id == restaurante_id,
+        )
         .order_by(Pedido.created_at.desc())
         .first()
     )

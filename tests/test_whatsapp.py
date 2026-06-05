@@ -206,18 +206,22 @@ class TestWebhookWhatsapp:
         """
         import app.routers.whatsapp as wa
 
+        fake_rest = MagicMock(id="default", nombre="Test Restaurante")
+
         async def mock_ensure_worker(telefono: str) -> None:
             class _InlineQueue:
-                async def put(self, mensaje: str) -> None:
+                async def put(self, item) -> None:
+                    mensaje, numero_destino = item
                     db = MagicMock()
-                    await wa._procesar_mensaje(db, telefono, mensaje)
+                    await wa._procesar_mensaje(db, telefono, mensaje, numero_destino)
 
                 def task_done(self) -> None:
                     pass
 
             wa._phone_queues[telefono] = _InlineQueue()
 
-        with patch.object(wa, "_ensure_worker", mock_ensure_worker):
+        with patch.object(wa, "_ensure_worker", mock_ensure_worker), \
+             patch.object(wa, "resolver_restaurante_por_numero", return_value=fake_rest):
             wa._phone_queues.clear()
             yield
             wa._phone_queues.clear()
@@ -481,11 +485,14 @@ class TestFase5EdgeCases:
         """Procesamiento inline + limpia rate limits entre tests de webhook."""
         import app.routers.whatsapp as wa
 
+        fake_rest = MagicMock(id="default", nombre="Test Restaurante")
+
         async def mock_ensure_worker(telefono: str) -> None:
             class _InlineQueue:
-                async def put(self, mensaje: str) -> None:
+                async def put(self, item) -> None:
+                    mensaje, numero_destino = item
                     db = MagicMock()
-                    await wa._procesar_mensaje(db, telefono, mensaje)
+                    await wa._procesar_mensaje(db, telefono, mensaje, numero_destino)
 
                 def task_done(self) -> None:
                     pass
@@ -493,7 +500,8 @@ class TestFase5EdgeCases:
             wa._phone_queues[telefono] = _InlineQueue()
 
         wa._rate_limits.clear()
-        with patch.object(wa, "_ensure_worker", mock_ensure_worker):
+        with patch.object(wa, "_ensure_worker", mock_ensure_worker), \
+             patch.object(wa, "resolver_restaurante_por_numero", return_value=fake_rest):
             wa._phone_queues.clear()
             yield
             wa._phone_queues.clear()
@@ -569,7 +577,7 @@ class TestFase5EdgeCases:
             .order_by.return_value
             .first.return_value) = pedido_reciente
 
-        resultado = obtener_ultimo_pedido(mock_db, "cliente-uuid")
+        resultado = obtener_ultimo_pedido(mock_db, "cliente-uuid", "default")
         assert resultado.referencia == "NEX-000002"
 
     def test_obtener_ultimo_pedido_sin_pedidos(self):
@@ -581,7 +589,7 @@ class TestFase5EdgeCases:
             .order_by.return_value
             .first.return_value) = None
 
-        assert obtener_ultimo_pedido(mock_db, "cliente-uuid") is None
+        assert obtener_ultimo_pedido(mock_db, "cliente-uuid", "default") is None
 
     # ── Conversation service: expirar_conversacion ────────────────────
 
@@ -663,7 +671,7 @@ class TestFase5EdgeCases:
 
         # Capturar el estado que se pasa al grafo
         captured_state = {}
-        def fake_invoke(state):
+        def fake_invoke(state, *args, **kwargs):
             captured_state.update(state)
             return {
                 "messages": [AIMessage(content="Tu pedido está en preparación")],

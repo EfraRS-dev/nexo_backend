@@ -15,6 +15,9 @@ class Conversacion(Base):
     cliente_id: Mapped[str] = mapped_column(
         String, ForeignKey("clientes.id"), nullable=False, index=True
     )
+    restaurante_id: Mapped[str] = mapped_column(
+        String, nullable=False, default="default", index=True
+    )
     # Array de mensajes: [{"role": "user"|"assistant", "content": "..."}]
     mensajes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # activa | finalizada | escalada

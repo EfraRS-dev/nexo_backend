@@ -46,6 +46,7 @@ def _make_state(**overrides) -> AgentState:
         "telefono_cliente": "+573001234567",
         "cliente_id": None,
         "conversacion_id": None,
+        "restaurante_id": "default",
         "etapa": "conversando",
         "requiere_escalamiento": False,
     }

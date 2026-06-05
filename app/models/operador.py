@@ -18,3 +18,6 @@ class Operador(Base):
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
     nombre: Mapped[str | None] = mapped_column(String, nullable=True)
     activo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    restaurante_id: Mapped[str] = mapped_column(
+        String, nullable=False, default="default", index=True
+    )

@@ -1,6 +1,7 @@
 """
 Router de administración.
 
+GET    /admin/me               — perfil del operador autenticado + su restaurante
 GET    /admin/pedidos           — lista paginada con filtros (estado, metodo_pago, fecha)
 GET    /admin/menu              — todos los ítems del menú
 POST   /admin/menu              — crea ítem
@@ -25,6 +26,7 @@ from app.models.menu import Menu
 from app.models.operador import Operador
 from app.models.pedido import Pedido
 from app.routers.auth import get_current_operador
+from app.services.restaurante_service import obtener_restaurante
 from app.cache import invalidar_menu
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,28 @@ class UpdateMenuItemRequest(BaseModel):
     disponible: bool | None = None
 
 
+class OperadorMeOut(BaseModel):
+    email: str
+    restaurante_id: str
+    restaurante_nombre: str
+
+
+# ── Perfil ──────────────────────────────────────────────────────────────────
+
+@router.get("/me", response_model=OperadorMeOut)
+def obtener_perfil(
+    db: Session = Depends(get_db),
+    operador: Operador = Depends(get_current_operador),
+):
+    """Retorna el operador autenticado y el restaurante (tenant) al que pertenece."""
+    rest = obtener_restaurante(db, operador.restaurante_id)
+    return OperadorMeOut(
+        email=operador.email,
+        restaurante_id=operador.restaurante_id,
+        restaurante_nombre=rest.nombre if rest else operador.restaurante_id,
+    )
+
+
 # ── Pedidos ───────────────────────────────────────────────────────────────────
 
 @router.get("/pedidos", response_model=PaginatedPedidos)
@@ -99,10 +123,10 @@ def listar_pedidos(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: Operador = Depends(get_current_operador),
+    operador: Operador = Depends(get_current_operador),
 ):
-    """Lista pedidos con filtros opcionales. Requiere JWT."""
-    query = db.query(Pedido)
+    """Lista pedidos con filtros opcionales. Requiere JWT. Aislado por restaurante."""
+    query = db.query(Pedido).filter(Pedido.restaurante_id == operador.restaurante_id)
 
     if estado:
         query = query.filter(Pedido.estado == estado)
@@ -154,12 +178,12 @@ def listar_pedidos(
 @router.get("/menu", response_model=list[MenuItemOut])
 def listar_menu(
     db: Session = Depends(get_db),
-    _: Operador = Depends(get_current_operador),
+    operador: Operador = Depends(get_current_operador),
 ):
-    """Retorna todos los ítems del menú activo."""
+    """Retorna todos los ítems del menú del restaurante del operador."""
     return (
         db.query(Menu)
-        .filter(Menu.restaurante_id == "default")
+        .filter(Menu.restaurante_id == operador.restaurante_id)
         .order_by(Menu.categoria, Menu.nombre)
         .all()
     )
@@ -169,12 +193,12 @@ def listar_menu(
 def crear_item_menu(
     body: CreateMenuItemRequest,
     db: Session = Depends(get_db),
-    _: Operador = Depends(get_current_operador),
+    operador: Operador = Depends(get_current_operador),
 ):
-    """Crea un nuevo ítem en el menú."""
+    """Crea un nuevo ítem en el menú del restaurante del operador."""
     if (
         db.query(Menu)
-        .filter(Menu.slug == body.slug, Menu.restaurante_id == "default")
+        .filter(Menu.slug == body.slug, Menu.restaurante_id == operador.restaurante_id)
         .first()
     ):
         raise HTTPException(
@@ -188,11 +212,12 @@ def crear_item_menu(
         precio=body.precio,
         categoria=body.categoria,
         disponible=body.disponible,
+        restaurante_id=operador.restaurante_id,
     )
     db.add(item)
     db.commit()
     db.refresh(item)
-    invalidar_menu()
+    invalidar_menu(operador.restaurante_id)
     logger.info("Ítem menú creado: %s (%s)", item.nombre, item.id)
     return item
 
@@ -202,10 +227,14 @@ def actualizar_item_menu(
     item_id: str,
     body: UpdateMenuItemRequest,
     db: Session = Depends(get_db),
-    _: Operador = Depends(get_current_operador),
+    operador: Operador = Depends(get_current_operador),
 ):
-    """Actualiza parcialmente un ítem del menú."""
-    item = db.query(Menu).filter(Menu.id == item_id).first()
+    """Actualiza parcialmente un ítem del menú del restaurante del operador."""
+    item = (
+        db.query(Menu)
+        .filter(Menu.id == item_id, Menu.restaurante_id == operador.restaurante_id)
+        .first()
+    )
     if item is None:
         raise HTTPException(
             status_code=404,
@@ -217,7 +246,7 @@ def actualizar_item_menu(
             db.query(Menu)
             .filter(
                 Menu.slug == body.slug,
-                Menu.restaurante_id == "default",
+                Menu.restaurante_id == operador.restaurante_id,
                 Menu.id != item_id,
             )
             .first()
@@ -240,7 +269,7 @@ def actualizar_item_menu(
 
     db.commit()
     db.refresh(item)
-    invalidar_menu()
+    invalidar_menu(operador.restaurante_id)
     logger.info("Ítem menú actualizado: %s (%s)", item.nombre, item_id)
     return item
 
@@ -249,10 +278,14 @@ def actualizar_item_menu(
 def eliminar_item_menu(
     item_id: str,
     db: Session = Depends(get_db),
-    _: Operador = Depends(get_current_operador),
+    operador: Operador = Depends(get_current_operador),
 ):
-    """Elimina un ítem del menú."""
-    item = db.query(Menu).filter(Menu.id == item_id).first()
+    """Elimina un ítem del menú del restaurante del operador."""
+    item = (
+        db.query(Menu)
+        .filter(Menu.id == item_id, Menu.restaurante_id == operador.restaurante_id)
+        .first()
+    )
     if item is None:
         raise HTTPException(
             status_code=404,
@@ -260,5 +293,5 @@ def eliminar_item_menu(
         )
     db.delete(item)
     db.commit()
-    invalidar_menu()
+    invalidar_menu(operador.restaurante_id)
     logger.info("Ítem menú eliminado: %s", item_id)

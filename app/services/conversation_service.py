@@ -17,25 +17,38 @@ from app.models.conversacion import Conversacion
 logger = logging.getLogger(__name__)
 
 
-def obtener_o_crear_conversacion(db: Session, cliente_id: str) -> Conversacion:
+def obtener_o_crear_conversacion(
+    db: Session, cliente_id: str, restaurante_id: str
+) -> Conversacion:
     """
-    Busca la conversación activa del cliente.
-    Si no existe, crea una nueva.
+    Busca la conversación activa del cliente en este restaurante.
+    Si no existe, crea una nueva. Una conversación pertenece a un único tenant.
     """
     conv = (
         db.query(Conversacion)
         .filter(
             Conversacion.cliente_id == cliente_id,
+            Conversacion.restaurante_id == restaurante_id,
             Conversacion.estado == "activa",
         )
         .first()
     )
     if conv is None:
-        conv = Conversacion(cliente_id=cliente_id, mensajes=[], estado="activa")
+        conv = Conversacion(
+            cliente_id=cliente_id,
+            restaurante_id=restaurante_id,
+            mensajes=[],
+            estado="activa",
+        )
         db.add(conv)
         db.commit()
         db.refresh(conv)
-        logger.info("Nueva conversación creada: %s para cliente %s", conv.id, cliente_id)
+        logger.info(
+            "Nueva conversación creada: %s para cliente %s (restaurante %s)",
+            conv.id,
+            cliente_id,
+            restaurante_id,
+        )
     return conv
 
 

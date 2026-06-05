@@ -35,6 +35,7 @@ class AgentState(TypedDict):
     telefono_cliente: str
     cliente_id: Optional[str]      # UUID del registro en DB
     conversacion_id: Optional[str] # UUID del registro en DB
+    restaurante_id: Optional[str]  # tenant (slug del restaurante)
 
     # ── Etapa global del flujo ───────────────────────────────────────
     # "conversando" | "confirmando" | "pagando" | "finalizado" | "escalado"

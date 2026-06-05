@@ -7,6 +7,7 @@ from app.models.pedido import Pedido, EstadoPedido, TipoPedido
 from app.models.item_pedido import ItemPedido
 from app.models.conversacion import Conversacion
 from app.models.pago import Pago
+from app.models.restaurante import Restaurante
 
 __all__ = [
     "Cliente",
@@ -18,4 +19,5 @@ __all__ = [
     "ItemPedido",
     "Conversacion",
     "Pago",
+    "Restaurante",
 ]

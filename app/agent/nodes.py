@@ -206,7 +206,12 @@ def nodo_clasificar(state: AgentState, config: RunnableConfig = None) -> dict:
 # NODO 2 — Conversar (tomar el pedido)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def nodo_conversar(state: AgentState, config: RunnableConfig = None, menu_texto: str = "") -> dict:
+def nodo_conversar(
+    state: AgentState,
+    config: RunnableConfig = None,
+    menu_texto: str = "",
+    restaurante_nombre: str = "",
+) -> dict:
     """
     Mantiene la conversación de pedido con el cliente.
     Lee el menú del parámetro menu_texto (inyectado por el grafo o el webhook).
@@ -214,7 +219,7 @@ def nodo_conversar(state: AgentState, config: RunnableConfig = None, menu_texto:
     """
     system = SYSTEM_PROMPT.format(
         menu=menu_texto or "(menú no disponible)",
-        restaurante=settings.restaurante_nombre,
+        restaurante=restaurante_nombre or settings.restaurante_nombre,
         zonas=_ZONAS_TEXTO,
     )
 
@@ -272,14 +277,20 @@ def nodo_confirmar(state: AgentState) -> dict:
 # NODO 4 — FAQ
 # ─────────────────────────────────────────────────────────────────────────────
 
-def nodo_faq(state: AgentState, config: RunnableConfig = None, menu_texto: str = "") -> dict:
+def nodo_faq(
+    state: AgentState,
+    config: RunnableConfig = None,
+    menu_texto: str = "",
+    restaurante_nombre: str = "",
+) -> dict:
     """Responde preguntas frecuentes del restaurante. RF-08."""
     ultimo_mensaje = next(
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
         "",
     )
 
-    key = faq_cache_key(ultimo_mensaje)
+    restaurante_id = state.get("restaurante_id") or "default"
+    key = faq_cache_key(ultimo_mensaje, restaurante_id)
     cached = cache_get(key)
     if cached is not None:
         return {
@@ -291,7 +302,7 @@ def nodo_faq(state: AgentState, config: RunnableConfig = None, menu_texto: str =
         [
             SystemMessage(content=FAQ_PROMPT.format(
                 menu=menu_texto or "(menú no disponible)",
-                restaurante=settings.restaurante_nombre,
+                restaurante=restaurante_nombre or settings.restaurante_nombre,
             )),
             HumanMessage(content=ultimo_mensaje),
         ],

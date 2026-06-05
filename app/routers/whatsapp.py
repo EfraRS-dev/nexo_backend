@@ -36,6 +36,11 @@ from app.services.menu_service import obtener_menu_formateado
 from app.services.payment_service import generar_link_pago
 from app.services.whatsapp_service import enviar_mensaje
 from app.services.order_service import crear_pedido, obtener_ultimo_pedido
+from app.services.restaurante_service import (
+    RESTAURANTE_DEFAULT,
+    obtener_restaurante,
+    resolver_restaurante_por_numero,
+)
 from app.utils.delivery_utils import validar_zona_domicilio
 from app.agent.graph import construir_grafo
 from app.agent.state import AgentState
@@ -105,7 +110,7 @@ async def _phone_worker(telefono: str) -> None:
     queue = _phone_queues[telefono]
     while True:
         try:
-            mensaje = await asyncio.wait_for(queue.get(), timeout=_WORKER_IDLE_TIMEOUT)
+            item = await asyncio.wait_for(queue.get(), timeout=_WORKER_IDLE_TIMEOUT)
         except asyncio.TimeoutError:
             # Inactividad — limpiar y salir
             _phone_workers.pop(telefono, None)
@@ -113,9 +118,10 @@ async def _phone_worker(telefono: str) -> None:
             logger.debug("Worker de %s destruido por inactividad", telefono)
             break
 
+        mensaje, numero_destino = item
         db: Session = SessionLocal()
         try:
-            await _procesar_mensaje(db, telefono, mensaje)
+            await _procesar_mensaje(db, telefono, mensaje, numero_destino)
         except Exception as exc:
             logger.error("Worker error para %s: %s", telefono, exc, exc_info=True)
             try:
@@ -167,6 +173,7 @@ async def webhook_whatsapp(
     request: Request,
     Body: str = Form(""),
     From: str = Form(""),
+    To: str = Form(""),
     NumMedia: str = Form("0"),
 ):
     """
@@ -180,6 +187,7 @@ async def webhook_whatsapp(
 
     # ── 2. Extraer datos ──────────────────────────────────────────────
     telefono = From.replace("whatsapp:", "").strip()
+    numero_destino = To.replace("whatsapp:", "").strip()
     mensaje = Body.strip()
 
     if not telefono:
@@ -212,21 +220,36 @@ async def webhook_whatsapp(
 
     # ── 3. Encolar y retornar 200 a Twilio de inmediato ──────────────
     await _ensure_worker(telefono)
-    await _phone_queues[telefono].put(mensaje)
+    await _phone_queues[telefono].put((mensaje, numero_destino))
     return Response(status_code=200, content="OK")
 
 
-async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
+async def _procesar_mensaje(
+    db: Session, telefono: str, mensaje: str, numero_destino: str = ""
+) -> None:
     """
     Lógica de negocio para un mensaje. Llamada por el worker del teléfono.
     La sesión DB es propiedad del worker (creada y cerrada externamente).
     """
 
+    # ── 3a. Resolver el restaurante (tenant) por el número destino ────
+    restaurante = resolver_restaurante_por_numero(db, numero_destino)
+    if restaurante is None:
+        logger.warning(
+            "Número destino '%s' sin restaurante asociado — usando '%s'",
+            numero_destino,
+            RESTAURANTE_DEFAULT,
+        )
+        restaurante = obtener_restaurante(db, RESTAURANTE_DEFAULT)
+
+    restaurante_id = restaurante.id if restaurante else RESTAURANTE_DEFAULT
+    restaurante_nombre = restaurante.nombre if restaurante else settings.restaurante_nombre
+
     # ── 3. Buscar/crear cliente ───────────────────────────────────────
     cliente = obtener_o_crear_cliente(db, telefono)
 
     # ── 4. Recuperar conversación activa ──────────────────────────────
-    conversacion = obtener_o_crear_conversacion(db, cliente.id)
+    conversacion = obtener_o_crear_conversacion(db, cliente.id, restaurante_id)
 
     # ── 4a. Timeout de inactividad (30 min) ───────────────────────────
     # Si la conversación lleva más de 30 min sin actividad, expira y se
@@ -238,7 +261,7 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
             telefono,
         )
         expirar_conversacion(db, conversacion)
-        conversacion = obtener_o_crear_conversacion(db, cliente.id)
+        conversacion = obtener_o_crear_conversacion(db, cliente.id, restaurante_id)
 
     # ── 5. Restaurar historial + agregar mensaje nuevo ────────────────
     historial = restaurar_mensajes(conversacion)
@@ -262,7 +285,7 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
     # pueda responder "¿cómo va mi pedido?" correctamente.
     comanda_en_estado = estado_previo.get("comanda")
     if not comanda_en_estado:
-        ultimo_pedido = obtener_ultimo_pedido(db, cliente.id)
+        ultimo_pedido = obtener_ultimo_pedido(db, cliente.id, restaurante_id)
         if ultimo_pedido:
             comanda_en_estado = {
                 "referencia": ultimo_pedido.referencia,
@@ -272,8 +295,8 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
                 "direccion_entrega": ultimo_pedido.direccion_entrega,
             }
     # ── 7. Cargar menú y construir grafo ──────────────────────────────
-    menu_texto = obtener_menu_formateado(db)
-    grafo = construir_grafo(menu_texto)
+    menu_texto = obtener_menu_formateado(db, restaurante_id)
+    grafo = construir_grafo(menu_texto, restaurante_nombre)
 
     # ── 8. Armar estado inicial para el grafo ─────────────────────────
     estado: AgentState = {
@@ -290,6 +313,7 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
         "telefono_cliente": telefono,
         "cliente_id": cliente.id,
         "conversacion_id": conversacion.id,
+        "restaurante_id": restaurante_id,
         "etapa": estado_previo.get("etapa", "conversando"),
         "requiere_escalamiento": False,
     }
@@ -359,7 +383,7 @@ async def _procesar_mensaje(db: Session, telefono: str, mensaje: str) -> None:
     pedido = None
     if etapa == "finalizado" and comanda:
         try:
-            pedido = crear_pedido(db, comanda, cliente.id)
+            pedido = crear_pedido(db, comanda, cliente.id, restaurante_id)
         except Exception as exc:
             logger.error("Error persistiendo pedido: %s", exc)
 

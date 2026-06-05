@@ -100,16 +100,16 @@ def cache_delete_pattern(pattern: str) -> None:
 # Claves con convención
 # ─────────────────────────────────────────────────────────────────────────────
 
-def menu_cache_key(restaurante_id: str = "default") -> str:
+def menu_cache_key(restaurante_id: str) -> str:
     return f"nexo:menu:{restaurante_id}"
 
 
-def faq_cache_key(question: str, restaurante_id: str = "default") -> str:
+def faq_cache_key(question: str, restaurante_id: str) -> str:
     digest = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]
     return f"nexo:faq:{restaurante_id}:{digest}"
 
 
-def invalidar_menu(restaurante_id: str = "default") -> None:
+def invalidar_menu(restaurante_id: str) -> None:
     """Borra caché del menú y de todas las FAQ asociadas al restaurante."""
     cache_delete(menu_cache_key(restaurante_id))
     cache_delete_pattern(f"nexo:faq:{restaurante_id}:*")

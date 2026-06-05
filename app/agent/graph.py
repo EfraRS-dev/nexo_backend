@@ -66,7 +66,7 @@ def _router_conversar(
 # Factory: construir_grafo
 # ─────────────────────────────────────────────────────────────────────────────
 
-def construir_grafo(menu_texto: str = "") -> StateGraph:
+def construir_grafo(menu_texto: str = "", restaurante_nombre: str = "") -> StateGraph:
     """
     Construye y compila el grafo LangGraph.
 
@@ -74,12 +74,17 @@ def construir_grafo(menu_texto: str = "") -> StateGraph:
         menu_texto: Texto formateado del menú (se inyecta en nodo_conversar).
                     Se puede pasar vacío y actualizarse en cada invocación
                     desde el webhook.
+        restaurante_nombre: Nombre del restaurante (tenant) para los prompts.
     """
     builder = StateGraph(AgentState)
 
-    # Envolvemos nodo_conversar para inyectar el menú de forma transparente
-    conversar_con_menu = partial(nodo_conversar, menu_texto=menu_texto)
-    faq_con_menu = partial(nodo_faq, menu_texto=menu_texto)
+    # Envolvemos nodo_conversar/nodo_faq para inyectar menú y nombre del restaurante
+    conversar_con_menu = partial(
+        nodo_conversar, menu_texto=menu_texto, restaurante_nombre=restaurante_nombre
+    )
+    faq_con_menu = partial(
+        nodo_faq, menu_texto=menu_texto, restaurante_nombre=restaurante_nombre
+    )
 
     # ── Registrar nodos ───────────────────────────────────────────────
     builder.add_node("nodo_clasificar", nodo_clasificar)

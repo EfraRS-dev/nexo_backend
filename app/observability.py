@@ -22,6 +22,7 @@ incluidos los que se ejecutan en el hilo secundario lanzado por asyncio.to_threa
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import nullcontext
 from typing import Any, List, Optional
 
@@ -45,6 +46,13 @@ def make_langfuse_handler() -> Optional[object]:
         if not settings.langfuse_public_key or not settings.langfuse_secret_key:
             logger.debug("Langfuse no configurado — tracing deshabilitado")
             return None
+
+        # Langfuse 4.x lee las credenciales de las variables de entorno.
+        # pydantic-settings carga el .env en el objeto Settings pero NO exporta
+        # a os.environ, así que las propagamos aquí antes de crear el handler.
+        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key)
+        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key)
+        os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_host)
 
         from langfuse.langchain import CallbackHandler  # type: ignore
 

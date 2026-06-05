@@ -17,6 +17,37 @@ logging.getLogger("twilio.http_client").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def _prefijo_desde_nombre(nombre: str) -> str:
+    """Deriva un prefijo de 4 letras mayúsculas a partir del nombre."""
+    import re
+    letras = re.sub(r"[^A-Za-z]", "", nombre or "").upper()
+    return (letras[:4] or "NEXO").ljust(4, "X")
+
+
+def _seed_restaurante_default() -> None:
+    """Crea el restaurante 'default' (tenant inicial) si no existe. Idempotente."""
+    from app.database import SessionLocal
+    from app.models.restaurante import Restaurante
+
+    db = SessionLocal()
+    try:
+        if not db.query(Restaurante).filter(Restaurante.id == "default").first():
+            rest = Restaurante(
+                id="default",
+                nombre=settings.restaurante_nombre,
+                numero_whatsapp=settings.twilio_whatsapp_number or "+00000000000",
+                prefijo=_prefijo_desde_nombre(settings.restaurante_nombre),
+                activo=True,
+            )
+            db.add(rest)
+            db.commit()
+            logger.info("Restaurante 'default' creado: %s", settings.restaurante_nombre)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo crear el restaurante 'default': %s", exc)
+    finally:
+        db.close()
+
+
 def _seed_admin() -> None:
     """Crea el operador admin inicial si ADMIN_PASSWORD está configurado y no existe."""
     from app.database import SessionLocal
@@ -30,6 +61,7 @@ def _seed_admin() -> None:
                 email=settings.admin_email,
                 hashed_password=hash_password(settings.admin_password),
                 nombre="Admin",
+                restaurante_id=settings.admin_restaurante_id,
             )
             db.add(op)
             db.commit()
@@ -73,6 +105,7 @@ def _check_langfuse() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────
+    _seed_restaurante_default()
     if settings.admin_password:
         _seed_admin()
 

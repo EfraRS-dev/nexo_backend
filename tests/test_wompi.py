@@ -76,7 +76,7 @@ class TestOrderService:
         mock_db.execute.return_value.scalar.return_value = 1  # contador secuencial
 
         from app.services.order_service import crear_pedido
-        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1")
+        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
 
         mock_db.add.assert_called()
         mock_db.flush.assert_called_once()
@@ -91,7 +91,7 @@ class TestOrderService:
         mock_db.query.return_value.filter.return_value.first.return_value = existing
 
         from app.services.order_service import crear_pedido
-        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1")
+        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
 
         mock_db.add.assert_not_called()
         assert pedido is existing

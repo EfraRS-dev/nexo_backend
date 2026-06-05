@@ -13,7 +13,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.operador import Operador
 from app.models.pedido import EstadoPedido
+from app.routers.auth import get_current_operador
 from app.services.order_service import obtener_pedido_por_referencia
 
 logger = logging.getLogger(__name__)
@@ -30,14 +32,15 @@ def actualizar_estado_pedido(
     referencia: str,
     body: ActualizarEstadoRequest,
     db: Session = Depends(get_db),
+    operador: Operador = Depends(get_current_operador),
 ):
     """
-    Actualiza el estado de un pedido. Para uso de operadores.
+    Actualiza el estado de un pedido. Requiere JWT. Aislado por restaurante.
 
     Estados válidos: pendiente, confirmado, pagado, preparando, en_camino, entregado
     """
     pedido = obtener_pedido_por_referencia(db, referencia)
-    if pedido is None:
+    if pedido is None or pedido.restaurante_id != operador.restaurante_id:
         raise HTTPException(status_code=404, detail=f"Pedido '{referencia}' no encontrado")
 
     pedido.estado = body.estado.value

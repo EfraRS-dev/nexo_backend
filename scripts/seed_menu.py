@@ -2,8 +2,10 @@
 Seed script: carga el menú del restaurante en la tabla `menu`.
 
 Uso:
-    python scripts/seed_menu.py
+    python scripts/seed_menu.py                              # restaurante "default"
+    python scripts/seed_menu.py --restaurante-id kikes-plaza
 """
+import argparse
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,12 +86,16 @@ MENU_SEED = {
 }
 
 
-def seed() -> None:
+def seed(restaurante_id: str = "default") -> None:
     db = SessionLocal()
     added = 0
     try:
         for slug, data in MENU_SEED.items():
-            existing = db.query(Menu).filter_by(slug=slug).first()
+            existing = (
+                db.query(Menu)
+                .filter_by(slug=slug, restaurante_id=restaurante_id)
+                .first()
+            )
             if existing:
                 print(f"  [skip] {slug} — ya existe")
                 continue
@@ -99,13 +105,13 @@ def seed() -> None:
                 precio=data["precio"],
                 disponible=data["disponible"],
                 categoria=data.get("categoria"),
-                restaurante_id="default",
+                restaurante_id=restaurante_id,
             )
             db.add(item)
             print(f"  [add]  {slug} — {data['nombre']}")
             added += 1
         db.commit()
-        print(f"\nSeed completado: {added} ítems añadidos.")
+        print(f"\nSeed completado para '{restaurante_id}': {added} ítems añadidos.")
     except Exception as exc:
         db.rollback()
         print(f"Error durante el seed: {exc}")
@@ -115,4 +121,11 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(description="Carga el menú inicial de un restaurante.")
+    parser.add_argument(
+        "--restaurante-id",
+        default="default",
+        help="ID (slug) del restaurante al que cargar el menú (default: 'default').",
+    )
+    args = parser.parse_args()
+    seed(args.restaurante_id)

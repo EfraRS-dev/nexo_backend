@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 480  # 8 horas
     admin_email: str = "admin@nexo.app"
     admin_password: str = ""  # Si se define, se crea el operador al iniciar
+    admin_restaurante_id: str = "default"  # tenant asignado al operador admin inicial
 
 
 settings = Settings()
