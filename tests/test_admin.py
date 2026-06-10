@@ -206,7 +206,8 @@ class TestAdminPedidos:
         mock_pedido.id = "ped-001"
         mock_pedido.referencia = "NEX-0001"
         mock_pedido.estado = "pendiente"
-        mock_pedido.tipo = "llevar"
+        mock_pedido.tipo = "domicilio"
+        mock_pedido.direccion_entrega = "Calle 84 #45-12"
         mock_pedido.metodo_pago = "caja"
         mock_pedido.total = 25000
         mock_pedido.created_at = datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -216,6 +217,17 @@ class TestAdminPedidos:
         mock_cliente.id = "cli-001"
         mock_cliente.telefono = "+573001234567"
         mock_cliente.nombre = "Juan"
+
+        mock_item = MagicMock()
+        mock_item.pedido_id = "ped-001"
+        mock_item.producto_id = "prod-001"
+        mock_item.cantidad = 2
+        mock_item.precio_unitario = 12500
+        mock_item.modificadores = {"Hamburguesa": {"sin": ["lechuga"]}}
+
+        mock_producto = MagicMock()
+        mock_producto.id = "prod-001"
+        mock_producto.nombre = "Hamburguesa"
 
         mock_db = MagicMock()
         rows = pedidos_list if pedidos_list is not None else [mock_pedido]
@@ -230,14 +242,26 @@ class TestAdminPedidos:
         ped_query.__iter__ = lambda self: iter(rows)
         ped_query.all.return_value = rows
 
-        # query(Cliente) chain
+        # Cargas en lote: query(X).filter(...).all()
         cli_query = MagicMock()
         cli_query.filter.return_value = cli_query
-        cli_query.first.return_value = mock_cliente
+        cli_query.all.return_value = [mock_cliente] if rows else []
 
-        mock_db.query.side_effect = lambda model: (
-            ped_query if model.__name__ == "Pedido" else cli_query
-        )
+        item_query = MagicMock()
+        item_query.filter.return_value = item_query
+        item_query.all.return_value = [mock_item] if rows else []
+
+        menu_query = MagicMock()
+        menu_query.filter.return_value = menu_query
+        menu_query.all.return_value = [mock_producto] if rows else []
+
+        mock_db.query.side_effect = lambda model: {
+            "Pedido": ped_query,
+            "Cliente": cli_query,
+            "ItemPedido": item_query,
+            "Menu": menu_query,
+        }[model.__name__]
+        mock_db._ped_query = ped_query
         return mock_db
 
     def test_lista_pedidos_retorna_paginado(self):
@@ -290,6 +314,48 @@ class TestAdminPedidos:
 
         assert result["total"] == 0
         assert result["items"] == []
+
+    def test_pedido_incluye_items_y_direccion(self):
+        from app.routers.admin import listar_pedidos
+        from app.models.operador import Operador
+
+        mock_db = self._mock_db_con_pedidos()
+        mock_operador = MagicMock(spec=Operador)
+
+        result = listar_pedidos(
+            estado=None, metodo_pago=None, fecha=None,
+            page=1, page_size=20,
+            db=mock_db, operador=mock_operador,
+        )
+
+        pedido = result["items"][0]
+        assert pedido["direccion_entrega"] == "Calle 84 #45-12"
+        assert len(pedido["items"]) == 1
+        item = pedido["items"][0]
+        assert item["nombre"] == "Hamburguesa"
+        assert item["cantidad"] == 2
+        assert item["precio_unitario"] == 12500
+        assert item["modificadores"] == {"Hamburguesa": {"sin": ["lechuga"]}}
+
+    def test_fecha_con_tz_offset_filtra_por_rango_local(self):
+        from datetime import datetime, timezone
+        from app.routers.admin import listar_pedidos
+        from app.models.operador import Operador
+
+        mock_db = self._mock_db_con_pedidos()
+        mock_operador = MagicMock(spec=Operador)
+
+        listar_pedidos(
+            estado=None, metodo_pago=None, fecha="2026-04-01", tz_offset=300,
+            page=1, page_size=20,
+            db=mock_db, operador=mock_operador,
+        )
+
+        # Segunda llamada a filter = rango de fecha (la primera es restaurante_id).
+        # El día local 2026-04-01 en Colombia (UTC-5) cubre [05:00 UTC, 05:00 UTC+1d)
+        fecha_filter = mock_db._ped_query.filter.call_args_list[1].args
+        assert fecha_filter[0].right.value == datetime(2026, 4, 1, 5, 0, tzinfo=timezone.utc)
+        assert fecha_filter[1].right.value == datetime(2026, 4, 2, 5, 0, tzinfo=timezone.utc)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -374,6 +440,42 @@ class TestAdminMenu:
 
         assert item.disponible is False
         mock_db.commit.assert_called_once()
+
+    def test_actualizar_categoria_null_la_limpia(self):
+        from app.routers.admin import actualizar_item_menu, UpdateMenuItemRequest
+        from app.models.operador import Operador
+
+        item = self._make_item()
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = item
+
+        actualizar_item_menu(
+            item_id="item-001",
+            body=UpdateMenuItemRequest(categoria=None),
+            db=mock_db,
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
+        )
+
+        assert item.categoria is None
+        mock_db.commit.assert_called_once()
+
+    def test_actualizar_sin_categoria_no_la_toca(self):
+        from app.routers.admin import actualizar_item_menu, UpdateMenuItemRequest
+        from app.models.operador import Operador
+
+        item = self._make_item()
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = item
+
+        actualizar_item_menu(
+            item_id="item-001",
+            body=UpdateMenuItemRequest(precio=20000),
+            db=mock_db,
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
+        )
+
+        assert item.categoria == "hamburguesas"
+        assert item.precio == 20000
 
     def test_actualizar_item_no_encontrado_lanza_404(self):
         from fastapi import HTTPException

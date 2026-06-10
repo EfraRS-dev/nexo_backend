@@ -13,15 +13,15 @@ Todos los endpoints requieren autenticación JWT (Bearer token).
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.cliente import Cliente
+from app.models.item_pedido import ItemPedido
 from app.models.menu import Menu
 from app.models.operador import Operador
 from app.models.pedido import Pedido
@@ -44,15 +44,27 @@ class ClienteOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ItemPedidoOut(BaseModel):
+    producto_id: str
+    cantidad: int
+    precio_unitario: int
+    modificadores: dict | None
+    nombre: str | None  # nombre del producto en el menú (None si fue eliminado)
+
+    model_config = {"from_attributes": True}
+
+
 class PedidoOut(BaseModel):
     id: str
     referencia: str
     estado: str
     tipo: str
+    direccion_entrega: str | None
     metodo_pago: str
     total: int
     created_at: str
     cliente: ClienteOut
+    items: list[ItemPedidoOut]
 
     model_config = {"from_attributes": True}
 
@@ -120,12 +132,18 @@ def listar_pedidos(
     estado: str | None = Query(None),
     metodo_pago: str | None = Query(None),
     fecha: str | None = Query(None),
+    tz_offset: int = Query(0, ge=-840, le=840),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     operador: Operador = Depends(get_current_operador),
 ):
-    """Lista pedidos con filtros opcionales. Requiere JWT. Aislado por restaurante."""
+    """Lista pedidos con filtros opcionales. Requiere JWT. Aislado por restaurante.
+
+    `fecha` se interpreta como día local del cliente; `tz_offset` son los minutos
+    que hay que sumar a la hora local para obtener UTC (convención de JS
+    `Date.getTimezoneOffset()`; Colombia = 300).
+    """
     query = db.query(Pedido).filter(Pedido.restaurante_id == operador.restaurante_id)
 
     if estado:
@@ -140,7 +158,11 @@ def listar_pedidos(
                 status_code=400,
                 detail="Formato de fecha inválido. Use YYYY-MM-DD.",
             )
-        query = query.filter(func.date(Pedido.created_at) == day)
+        inicio = datetime(
+            day.year, day.month, day.day, tzinfo=timezone.utc
+        ) + timedelta(minutes=tz_offset)
+        fin = inicio + timedelta(days=1)
+        query = query.filter(Pedido.created_at >= inicio, Pedido.created_at < fin)
 
     total = query.count()
     pedidos = (
@@ -150,15 +172,41 @@ def listar_pedidos(
         .all()
     )
 
+    # Carga en lote de clientes, items y nombres de producto (evita N+1)
+    cliente_ids = {p.cliente_id for p in pedidos}
+    clientes: dict[str, Cliente] = {}
+    if cliente_ids:
+        clientes = {
+            c.id: c
+            for c in db.query(Cliente).filter(Cliente.id.in_(cliente_ids)).all()
+        }
+
+    pedido_ids = [p.id for p in pedidos]
+    items_por_pedido: dict[str, list[ItemPedido]] = {}
+    productos: dict[str, Menu] = {}
+    if pedido_ids:
+        items_pedido = (
+            db.query(ItemPedido).filter(ItemPedido.pedido_id.in_(pedido_ids)).all()
+        )
+        producto_ids = {i.producto_id for i in items_pedido}
+        if producto_ids:
+            productos = {
+                m.id: m
+                for m in db.query(Menu).filter(Menu.id.in_(producto_ids)).all()
+            }
+        for i in items_pedido:
+            items_por_pedido.setdefault(i.pedido_id, []).append(i)
+
     items: list[dict] = []
     for p in pedidos:
-        cliente = db.query(Cliente).filter(Cliente.id == p.cliente_id).first()
+        cliente = clientes.get(p.cliente_id)
         items.append(
             {
                 "id": p.id,
                 "referencia": p.referencia,
                 "estado": p.estado,
                 "tipo": p.tipo,
+                "direccion_entrega": p.direccion_entrega,
                 "metodo_pago": p.metodo_pago,
                 "total": p.total,
                 "created_at": p.created_at.isoformat(),
@@ -167,6 +215,20 @@ def listar_pedidos(
                     "telefono": cliente.telefono if cliente else "",
                     "nombre": cliente.nombre if cliente else None,
                 },
+                "items": [
+                    {
+                        "producto_id": i.producto_id,
+                        "cantidad": i.cantidad,
+                        "precio_unitario": i.precio_unitario,
+                        "modificadores": i.modificadores,
+                        "nombre": (
+                            productos[i.producto_id].nombre
+                            if i.producto_id in productos
+                            else None
+                        ),
+                    }
+                    for i in items_por_pedido.get(p.id, [])
+                ],
             }
         )
 
@@ -241,11 +303,15 @@ def actualizar_item_menu(
             detail=f"Ítem '{item_id}' no encontrado",
         )
 
-    if body.slug is not None:
+    # exclude_unset distingue "campo no enviado" de "enviado como null":
+    # categoria es nullable y debe poder limpiarse; el resto ignora null.
+    data = body.model_dump(exclude_unset=True)
+
+    if data.get("slug") is not None:
         conflict = (
             db.query(Menu)
             .filter(
-                Menu.slug == body.slug,
+                Menu.slug == data["slug"],
                 Menu.restaurante_id == operador.restaurante_id,
                 Menu.id != item_id,
             )
@@ -254,18 +320,18 @@ def actualizar_item_menu(
         if conflict:
             raise HTTPException(
                 status_code=409,
-                detail=f"El slug '{body.slug}' ya está en uso",
+                detail=f"El slug '{data['slug']}' ya está en uso",
             )
-        item.slug = body.slug
+        item.slug = data["slug"]
 
-    if body.nombre is not None:
-        item.nombre = body.nombre
-    if body.precio is not None:
-        item.precio = body.precio
-    if body.categoria is not None:
-        item.categoria = body.categoria
-    if body.disponible is not None:
-        item.disponible = body.disponible
+    if data.get("nombre") is not None:
+        item.nombre = data["nombre"]
+    if data.get("precio") is not None:
+        item.precio = data["precio"]
+    if "categoria" in data:
+        item.categoria = data["categoria"]
+    if data.get("disponible") is not None:
+        item.disponible = data["disponible"]
 
     db.commit()
     db.refresh(item)
