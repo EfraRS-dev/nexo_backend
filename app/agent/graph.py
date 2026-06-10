@@ -5,8 +5,8 @@ Topología:
     START
       └─► nodo_clasificar
             ├─ "pedir"         ─► nodo_conversar ─► (router_conversar)
-            │                         ├─ "confirmar"   ─► nodo_confirmar ─► nodo_conversar (loop)
-            │                         ├─ "comanda"     ─► nodo_generar_comanda ─► nodo_pago ─► END
+            │                         ├─ pedido_listo            ─► nodo_generar_comanda ─► nodo_pago ─► END
+            │                         ├─ esperando_confirmacion  ─► nodo_confirmar ─► END
             │                         └─ END  (seguir conversando — el webhook vuelve a invocar)
             ├─ "faq"           ─► nodo_faq ─► END
             ├─ "estado_pedido" ─► nodo_estado_pedido ─► END
@@ -66,7 +66,11 @@ def _router_conversar(
 # Factory: construir_grafo
 # ─────────────────────────────────────────────────────────────────────────────
 
-def construir_grafo(menu_texto: str = "", restaurante_nombre: str = "") -> StateGraph:
+def construir_grafo(
+    menu_texto: str = "",
+    restaurante_nombre: str = "",
+    zonas_texto: str = "",
+) -> StateGraph:
     """
     Construye y compila el grafo LangGraph.
 
@@ -75,15 +79,24 @@ def construir_grafo(menu_texto: str = "", restaurante_nombre: str = "") -> State
                     Se puede pasar vacío y actualizarse en cada invocación
                     desde el webhook.
         restaurante_nombre: Nombre del restaurante (tenant) para los prompts.
+        zonas_texto: Zonas de cobertura del tenant ya formateadas. Vacío → los
+                     nodos usan el default _ZONAS_TEXTO. Misma fuente que la
+                     validación de domicilio (ver bug A-2).
     """
     builder = StateGraph(AgentState)
 
-    # Envolvemos nodo_conversar/nodo_faq para inyectar menú y nombre del restaurante
+    # Envolvemos nodo_conversar/nodo_faq para inyectar menú, nombre y zonas del tenant
     conversar_con_menu = partial(
-        nodo_conversar, menu_texto=menu_texto, restaurante_nombre=restaurante_nombre
+        nodo_conversar,
+        menu_texto=menu_texto,
+        restaurante_nombre=restaurante_nombre,
+        zonas_texto=zonas_texto,
     )
     faq_con_menu = partial(
-        nodo_faq, menu_texto=menu_texto, restaurante_nombre=restaurante_nombre
+        nodo_faq,
+        menu_texto=menu_texto,
+        restaurante_nombre=restaurante_nombre,
+        zonas_texto=zonas_texto,
     )
 
     # ── Registrar nodos ───────────────────────────────────────────────

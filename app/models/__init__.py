@@ -8,6 +8,7 @@ from app.models.item_pedido import ItemPedido
 from app.models.conversacion import Conversacion
 from app.models.pago import Pago
 from app.models.restaurante import Restaurante
+from app.models.operador import Operador
 
 __all__ = [
     "Cliente",
@@ -20,4 +21,5 @@ __all__ = [
     "Conversacion",
     "Pago",
     "Restaurante",
+    "Operador",
 ]

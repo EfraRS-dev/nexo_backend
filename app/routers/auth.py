@@ -1,7 +1,8 @@
 """
 Router de autenticación.
 
-POST /auth/login  — verifica email/contraseña y devuelve un JWT Bearer token.
+POST /auth/login    — verifica email/contraseña y devuelve un JWT Bearer token.
+POST /auth/refresh  — renueva el JWT a partir de un token vigente.
 
 El token puede usarse en cualquier endpoint protegido mediante:
     Authorization: Bearer <token>
@@ -135,4 +136,12 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token(sub=operador.email)
     logger.info("Operador '%s' inició sesión", operador.email)
+    return LoginResponse(access_token=token)
+
+
+@router.post("/refresh", response_model=LoginResponse)
+def refresh(operador: Operador = Depends(get_current_operador)):
+    """Renueva el JWT de un operador autenticado y devuelve uno nuevo."""
+    token = create_access_token(sub=operador.email)
+    logger.info("Operador '%s' renovó su sesión", operador.email)
     return LoginResponse(access_token=token)

@@ -32,6 +32,11 @@ class Pedido(Base):
     restaurante_id: Mapped[str] = mapped_column(
         String, nullable=False, default="default"
     )
+    # Conversación que originó el pedido. Clave de idempotencia: una conversación
+    # finaliza en a lo sumo un pedido (índice único parcial en DB). Ver bug B-8.
+    conversacion_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("conversaciones.id"), nullable=True, index=True
+    )
     referencia: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     estado: Mapped[str] = mapped_column(
         String, nullable=False, default=EstadoPedido.pendiente

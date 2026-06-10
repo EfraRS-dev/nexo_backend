@@ -414,7 +414,7 @@ class TestNodoPago:
         assert "enlace de pago" in last_msg.lower()
         assert result["etapa"] == "finalizado"
         # El link de pago NO se genera en el nodo — lo envía el webhook
-        assert result.get("link_pago") is None
+        assert "link_pago" not in result
 
     def test_caja_confirma_sin_enlace(self):
         """Para metodo_pago caja, envía confirmación sin generar link Wompi."""

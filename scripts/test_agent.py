@@ -49,7 +49,6 @@ def main() -> int:
         "direccion_entrega": None,
         "metodo_pago": "",
         "comanda": None,
-        "link_pago": None,
         "telefono_cliente": telefono,
         "cliente_id": None,
         "conversacion_id": None,

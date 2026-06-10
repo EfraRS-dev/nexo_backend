@@ -158,12 +158,24 @@ async def webhook_wompi(
     )
 
     from app.models.item_pedido import ItemPedido
+    from app.models.menu import Menu
     items_db = db.query(ItemPedido).filter(ItemPedido.pedido_id == pedido.id).all()
+    # Resolver nombres legibles del menú (producto_id es el UUID en menu.id).
+    # Si un ítem fue borrado del menú, caemos al id como último recurso.
+    ids_productos = [i.producto_id for i in items_db]
+    nombres_por_id = (
+        {
+            m.id: m.nombre
+            for m in db.query(Menu).filter(Menu.id.in_(ids_productos)).all()
+        }
+        if ids_productos
+        else {}
+    )
     comanda_recibo = {
         "referencia": pedido.referencia,
         "items": [
             {
-                "nombre": i.producto_id,
+                "nombre": nombres_por_id.get(i.producto_id, i.producto_id),
                 "cantidad": i.cantidad,
                 "precio_unitario": i.precio_unitario,
             }
@@ -175,11 +187,14 @@ async def webhook_wompi(
     }
     enviar_recibo(cliente.telefono, comanda_recibo)
 
-    # ── 10. Finalizar conversación activa del cliente ─────────────────
+    # ── 10. Finalizar conversación activa del cliente en este tenant ──
+    # Filtra por restaurante_id del pedido para no cerrar la conversación de
+    # otro tenant si el cliente tiene varias activas (ver bug R-2).
     conversacion = (
         db.query(Conversacion)
         .filter(
             Conversacion.cliente_id == cliente.id,
+            Conversacion.restaurante_id == pedido.restaurante_id,
             Conversacion.estado == "activa",
         )
         .first()

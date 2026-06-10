@@ -5,7 +5,7 @@ POST /webhooks/whatsapp
 - Valida firma HMAC de Twilio
 - Extrae teléfono + mensaje
 - Encola el mensaje y retorna 200 a Twilio de inmediato
-- Un worker por teléfono drena la cola en orden, con su propia sesión DB
+- Un worker por par (teléfono, tenant) drena la cola en orden, con su propia sesión DB
 """
 from __future__ import annotations
 
@@ -41,7 +41,8 @@ from app.services.restaurante_service import (
     obtener_restaurante,
     resolver_restaurante_por_numero,
 )
-from app.utils.delivery_utils import validar_zona_domicilio
+from app.utils.delivery_utils import obtener_zonas_cobertura, validar_zona_domicilio
+from app.agent.prompts import zonas_a_texto
 from app.agent.graph import construir_grafo
 from app.agent.state import AgentState
 from app.observability import make_langfuse_handler, langfuse_context
@@ -59,6 +60,27 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 _rate_limits: dict[str, deque] = {}
 _RATE_LIMIT_PER_MIN = 20  # mensajes máximos por teléfono por minuto
 _RATE_LIMIT_WINDOW_S = 60.0
+# Control del barrido periódico de teléfonos inactivos (evita fuga de memoria)
+_rate_limit_last_purge = 0.0
+
+
+def _purgar_rate_limits(ahora: float) -> None:
+    """
+    Elimina del dict los teléfonos cuya ventana ya expiró por completo.
+    Sin esto, cada número único deja una entrada permanente (fuga lenta).
+    Se ejecuta a lo sumo una vez por ventana para no recorrer el dict en cada mensaje.
+    """
+    global _rate_limit_last_purge
+    if ahora - _rate_limit_last_purge < _RATE_LIMIT_WINDOW_S:
+        return
+    _rate_limit_last_purge = ahora
+    expirados = [
+        tel
+        for tel, ts in _rate_limits.items()
+        if not ts or ahora - ts[-1] > _RATE_LIMIT_WINDOW_S
+    ]
+    for tel in expirados:
+        del _rate_limits[tel]
 
 
 def _esta_bajo_limite(telefono: str) -> bool:
@@ -67,6 +89,7 @@ def _esta_bajo_limite(telefono: str) -> bool:
     Retorna True si el número puede enviar otro mensaje; False si excedió el límite.
     """
     ahora = time.monotonic()
+    _purgar_rate_limits(ahora)
     if telefono not in _rate_limits:
         _rate_limits[telefono] = deque()
     timestamps = _rate_limits[telefono]
@@ -79,46 +102,51 @@ def _esta_bajo_limite(telefono: str) -> bool:
     return True
 
 
-# ── Cola por teléfono ─────────────────────────────────────────────────────────
-# Un asyncio.Queue + una Task de worker por número.
+# ── Cola por (teléfono, tenant) ───────────────────────────────────────────────
+# Un asyncio.Queue + una Task de worker por par (número origen, número destino).
 # El webhook encola el mensaje y retorna 200 a Twilio de inmediato.
 # El worker drena la cola en orden con su propia sesión DB.
+# La clave incluye el número destino (tenant) para que un mismo cliente que
+# escribe a dos restaurantes distintos no comparta worker/cola entre tenants.
 
-_phone_queues: dict[str, asyncio.Queue] = {}
-_phone_workers: dict[str, asyncio.Task] = {}
+_ConversationKey = tuple[str, str]  # (telefono, numero_destino)
+
+_phone_queues: dict[_ConversationKey, asyncio.Queue] = {}
+_phone_workers: dict[_ConversationKey, asyncio.Task] = {}
 
 # Tiempo máximo de inactividad antes de destruir el worker (segundos)
 _WORKER_IDLE_TIMEOUT = 300
 
 
-async def _ensure_worker(telefono: str) -> None:
-    """Crea la cola y el worker del teléfono si no existen o si el worker terminó."""
-    if telefono not in _phone_queues:
-        _phone_queues[telefono] = asyncio.Queue()
-    worker = _phone_workers.get(telefono)
+async def _ensure_worker(clave: _ConversationKey) -> None:
+    """Crea la cola y el worker del par (teléfono, tenant) si no existen o si terminó."""
+    if clave not in _phone_queues:
+        _phone_queues[clave] = asyncio.Queue()
+    worker = _phone_workers.get(clave)
     if worker is None or worker.done():
-        _phone_workers[telefono] = asyncio.create_task(
-            _phone_worker(telefono), name=f"worker-{telefono}"
+        telefono, numero_destino = clave
+        _phone_workers[clave] = asyncio.create_task(
+            _phone_worker(clave), name=f"worker-{telefono}-{numero_destino}"
         )
 
 
-async def _phone_worker(telefono: str) -> None:
+async def _phone_worker(clave: _ConversationKey) -> None:
     """
-    Worker por teléfono: procesa mensajes en orden, uno a la vez.
+    Worker por (teléfono, tenant): procesa mensajes en orden, uno a la vez.
     Se auto-destruye tras _WORKER_IDLE_TIMEOUT segundos sin mensajes.
     """
-    queue = _phone_queues[telefono]
+    telefono, numero_destino = clave
+    queue = _phone_queues[clave]
     while True:
         try:
-            item = await asyncio.wait_for(queue.get(), timeout=_WORKER_IDLE_TIMEOUT)
+            mensaje = await asyncio.wait_for(queue.get(), timeout=_WORKER_IDLE_TIMEOUT)
         except asyncio.TimeoutError:
             # Inactividad — limpiar y salir
-            _phone_workers.pop(telefono, None)
-            _phone_queues.pop(telefono, None)
-            logger.debug("Worker de %s destruido por inactividad", telefono)
+            _phone_workers.pop(clave, None)
+            _phone_queues.pop(clave, None)
+            logger.debug("Worker de %s→%s destruido por inactividad", telefono, numero_destino)
             break
 
-        mensaje, numero_destino = item
         db: Session = SessionLocal()
         try:
             await _procesar_mensaje(db, telefono, mensaje, numero_destino)
@@ -194,9 +222,12 @@ async def webhook_whatsapp(
         return Response(status_code=400, content="Número de teléfono requerido")
 
     # ── 2a. Rate limiting ─────────────────────────────────────────────
+    # enviar_mensaje hace HTTP a Twilio (bloqueante): se ejecuta en un hilo
+    # para no bloquear el event loop del endpoint async.
     if not _esta_bajo_limite(telefono):
         logger.warning("Rate limit excedido para %s", telefono)
-        enviar_mensaje(
+        await asyncio.to_thread(
+            enviar_mensaje,
             telefono,
             "Estás enviando muchos mensajes seguidos. Espera un momento antes de continuar. 🙏",
         )
@@ -205,22 +236,30 @@ async def webhook_whatsapp(
     # ── 2b. Mensajes multimedia (audio, imagen, etc.) ─────────────────
     num_media = int(NumMedia) if NumMedia.isdigit() else 0
     if num_media > 0 and not mensaje:
-        enviar_mensaje(
+        await asyncio.to_thread(
+            enviar_mensaje,
             telefono,
             "Solo proceso mensajes de texto. ¿Podrías escribirme tu pedido? 📝",
         )
         return Response(status_code=200, content="OK")
 
     if not mensaje:
-        enviar_mensaje(telefono, "No pude leer tu mensaje. ¿Podrías escribirlo de nuevo? 😊")
+        await asyncio.to_thread(
+            enviar_mensaje,
+            telefono,
+            "No pude leer tu mensaje. ¿Podrías escribirlo de nuevo? 😊",
+        )
         return Response(status_code=200, content="OK")
 
     mensaje = limitar_entrada_usuario(mensaje, settings.max_input_chars)
     logger.info("Mensaje recibido de %s: %s", telefono, mensaje[:80])
 
     # ── 3. Encolar y retornar 200 a Twilio de inmediato ──────────────
-    await _ensure_worker(telefono)
-    await _phone_queues[telefono].put((mensaje, numero_destino))
+    # La clave incluye el tenant (numero_destino) para aislar conversaciones
+    # del mismo cliente hacia restaurantes distintos.
+    clave = (telefono, numero_destino)
+    await _ensure_worker(clave)
+    await _phone_queues[clave].put(mensaje)
     return Response(status_code=200, content="OK")
 
 
@@ -295,8 +334,11 @@ async def _procesar_mensaje(
                 "direccion_entrega": ultimo_pedido.direccion_entrega,
             }
     # ── 7. Cargar menú y construir grafo ──────────────────────────────
+    # Resolver zonas de cobertura del tenant (fuente única que alimenta los
+    # prompts y la validación de domicilio; evita el drift del bug A-2).
+    zonas_cobertura = obtener_zonas_cobertura(restaurante)
     menu_texto = obtener_menu_formateado(db, restaurante_id)
-    grafo = construir_grafo(menu_texto, restaurante_nombre)
+    grafo = construir_grafo(menu_texto, restaurante_nombre, zonas_a_texto(zonas_cobertura))
 
     # ── 8. Armar estado inicial para el grafo ─────────────────────────
     estado: AgentState = {
@@ -308,7 +350,6 @@ async def _procesar_mensaje(
         "tipo_pedido": estado_previo.get("tipo_pedido", ""),
         "direccion_entrega": estado_previo.get("direccion_entrega"),
         "comanda": comanda_en_estado,
-        "link_pago": None,
         "metodo_pago": estado_previo.get("metodo_pago", ""),
         "telefono_cliente": telefono,
         "cliente_id": cliente.id,
@@ -354,7 +395,7 @@ async def _procesar_mensaje(
         etapa == "finalizado"
         and tipo_pedido_resultado == "domicilio"
         and direccion_resultado
-        and not validar_zona_domicilio(direccion_resultado)
+        and not validar_zona_domicilio(direccion_resultado, zonas_cobertura)
     ):
         logger.warning(
             "Domicilio fuera de cobertura para %s: %s",
@@ -381,9 +422,12 @@ async def _procesar_mensaje(
     # `etapa` ya fue extraído/modificado en el paso 9a (zona validation)
     comanda = resultado.get("comanda")
     pedido = None
+    pedido_creado = False  # False si crear_pedido devolvió un pedido ya existente
     if etapa == "finalizado" and comanda:
         try:
-            pedido = crear_pedido(db, comanda, cliente.id, restaurante_id)
+            pedido, pedido_creado = crear_pedido(
+                db, comanda, cliente.id, restaurante_id, conversacion_id=conversacion.id
+            )
         except Exception as exc:
             logger.error("Error persistiendo pedido: %s", exc)
 
@@ -404,7 +448,9 @@ async def _procesar_mensaje(
         await asyncio.to_thread(enviar_mensaje, telefono, "Un momento, ¿en qué te puedo ayudar? 😊")
 
     # ── 14. Enviar link de pago (online) o confirmación (caja) ────────
-    if etapa == "finalizado" and pedido:
+    # Solo si el pedido se creó en ESTE turno: un pedido idempotente (duplicado
+    # por reintento) no vuelve a enviar cobro/confirmación al cliente (bug B-8).
+    if etapa == "finalizado" and pedido and pedido_creado:
         metodo = (resultado.get("metodo_pago") or comanda.get("metodo_pago") or "online")
         if metodo != "caja":
             link = generar_link_pago(pedido.referencia, pedido.total)

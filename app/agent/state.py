@@ -27,9 +27,10 @@ class AgentState(TypedDict):
     # "online" → link Wompi  |  "caja" → pago al recoger  |  "" → sin determinar
     metodo_pago: str
 
-    # ── Comanda y pago (resultado final) ────────────────────────────
+    # ── Comanda (resultado final) ───────────────────────────────────
+    # El link de pago NO vive en el estado: se genera en el webhook tras
+    # persistir el pedido y se envía directo por WhatsApp.
     comanda: Optional[dict]
-    link_pago: Optional[str]
 
     # ── Identificadores de sesión ────────────────────────────────────
     telefono_cliente: str

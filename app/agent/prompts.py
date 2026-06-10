@@ -18,7 +18,14 @@ ZONAS_COBERTURA: list[str] = [
     "san victorino",
 ]
 
-_ZONAS_TEXTO = ", ".join(z.title() for z in ZONAS_COBERTURA)
+def zonas_a_texto(zonas: list[str]) -> str:
+    """Formatea una lista de zonas a texto legible para los prompts (Title Case, separadas por coma)."""
+    return ", ".join(z.title() for z in zonas)
+
+
+# Texto por defecto (tenant sin zonas en config_json). Los nodos reciben el texto
+# del tenant resuelto en runtime; este sirve de fallback en pruebas/uso directo.
+_ZONAS_TEXTO = zonas_a_texto(ZONAS_COBERTURA)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PROMPT DE CLASIFICACIÓN DE INTENCIÓN
@@ -122,7 +129,7 @@ MENÚ DISPONIBLE:
 
 INFORMACIÓN DEL RESTAURANTE:
 - Horario: Lunes a domingo de 11:00 a.m. a 10:00 p.m.
-- Cobertura de domicilio: toda la ciudad, tiempo estimado 30-45 minutos.
+- Cobertura de domicilio: solo estas zonas: {zonas}. Tiempo estimado 30-45 minutos. Fuera de esas zonas no hay domicilio (sugiere recoger en tienda).
 - Métodos de pago: Wompi (tarjeta débito/crédito, Nequi, PSE).
 - Tiempo de preparación: 15-20 minutos para llevar.
 - Teléfono de contacto: disponible a través de este chat.

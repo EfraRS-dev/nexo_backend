@@ -52,21 +52,48 @@ def _prefijo_restaurante(db: Session, restaurante_id: str) -> str:
     return "NEXO"
 
 
-def crear_pedido(db: Session, comanda: dict, cliente_id: str, restaurante_id: str) -> Pedido:
+def crear_pedido(
+    db: Session,
+    comanda: dict,
+    cliente_id: str,
+    restaurante_id: str,
+    conversacion_id: str | None = None,
+) -> tuple[Pedido, bool]:
     """
     Crea registros en pedidos + items_pedido a partir del dict de comanda.
     Asigna una referencia secuencial legible por restaurante ({PREFIJO}-0001).
-    Idempotente: si la referencia ya existe (y no es PENDIENTE), devuelve el pedido existente.
+
+    Idempotente por conversación (clave principal, bug B-8): una conversación
+    finaliza en a lo sumo un pedido. Si ya existe un pedido para `conversacion_id`,
+    lo devuelve sin crear uno nuevo. Conserva además la idempotencia por
+    referencia para cuando la comanda ya trae una referencia asignada (≠ PENDIENTE).
 
     Args:
         db: Sesión SQLAlchemy.
         comanda: Dict con items, total, tipo_pedido, direccion_entrega, metodo_pago.
         cliente_id: UUID del cliente.
         restaurante_id: Tenant al que pertenece el pedido.
+        conversacion_id: Conversación que originó el pedido (clave de dedupe).
 
     Returns:
-        Instancia de Pedido creada o ya existente.
+        Tupla (pedido, fue_creado). `fue_creado=False` cuando se devolvió un
+        pedido existente en vez de crear uno nuevo.
     """
+    # Idempotencia por conversación: 1 conversación = 1 pedido.
+    if conversacion_id:
+        existente = (
+            db.query(Pedido)
+            .filter(Pedido.conversacion_id == conversacion_id)
+            .first()
+        )
+        if existente:
+            logger.info(
+                "Pedido %s ya existe para conversación %s — omitiendo creación",
+                existente.referencia,
+                conversacion_id,
+            )
+            return existente, False
+
     ref_actual = comanda.get("referencia", "PENDIENTE")
 
     # Idempotencia solo cuando la referencia ya fue asignada (no PENDIENTE)
@@ -76,7 +103,7 @@ def crear_pedido(db: Session, comanda: dict, cliente_id: str, restaurante_id: st
         )
         if existente:
             logger.info("Pedido %s ya existe — omitiendo creación", ref_actual)
-            return existente
+            return existente, False
 
     # Asignar referencia secuencial por restaurante (formato KIKE-0001)
     numero = _siguiente_numero_pedido(db, restaurante_id)
@@ -86,6 +113,7 @@ def crear_pedido(db: Session, comanda: dict, cliente_id: str, restaurante_id: st
     pedido = Pedido(
         cliente_id=cliente_id,
         restaurante_id=restaurante_id,
+        conversacion_id=conversacion_id,
         referencia=referencia,
         estado="pendiente",
         tipo=comanda.get("tipo_pedido", "llevar"),
@@ -130,7 +158,7 @@ def crear_pedido(db: Session, comanda: dict, cliente_id: str, restaurante_id: st
     db.commit()
     db.refresh(pedido)
     logger.info("Pedido creado: %s — $%s COP", pedido.referencia, pedido.total)
-    return pedido
+    return pedido, True
 
 
 def obtener_pedido_por_referencia(db: Session, referencia: str) -> Pedido | None:

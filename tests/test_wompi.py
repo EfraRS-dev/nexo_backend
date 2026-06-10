@@ -76,8 +76,9 @@ class TestOrderService:
         mock_db.execute.return_value.scalar.return_value = 1  # contador secuencial
 
         from app.services.order_service import crear_pedido
-        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
+        pedido, fue_creado = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
 
+        assert fue_creado is True
         mock_db.add.assert_called()
         mock_db.flush.assert_called_once()
         mock_db.commit.assert_called_once()
@@ -91,10 +92,29 @@ class TestOrderService:
         mock_db.query.return_value.filter.return_value.first.return_value = existing
 
         from app.services.order_service import crear_pedido
-        pedido = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
+        pedido, fue_creado = crear_pedido(mock_db, COMANDA_TEST, "cliente-uuid-1", "default")
 
         mock_db.add.assert_not_called()
         assert pedido is existing
+        assert fue_creado is False
+
+    @patch("app.services.order_service.buscar_producto_por_slug", return_value=None)
+    def test_crear_pedido_idempotente_por_conversacion(self, mock_buscar):
+        """Con referencia PENDIENTE, la dedupe ocurre por conversacion_id (B-8)."""
+        existing = MagicMock()
+        existing.referencia = "NEX-CONV"
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = existing
+
+        from app.services.order_service import crear_pedido
+        comanda = {**COMANDA_TEST, "referencia": "PENDIENTE"}
+        pedido, fue_creado = crear_pedido(
+            mock_db, comanda, "cliente-uuid-1", "default", conversacion_id="conv-99"
+        )
+
+        mock_db.add.assert_not_called()
+        assert pedido is existing
+        assert fue_creado is False
 
     def test_obtener_pedido_por_referencia(self):
         mock_pedido = MagicMock()

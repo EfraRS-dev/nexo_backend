@@ -208,17 +208,18 @@ class TestWebhookWhatsapp:
 
         fake_rest = MagicMock(id="default", nombre="Test Restaurante")
 
-        async def mock_ensure_worker(telefono: str) -> None:
+        async def mock_ensure_worker(clave) -> None:
+            telefono, numero_destino = clave
+
             class _InlineQueue:
-                async def put(self, item) -> None:
-                    mensaje, numero_destino = item
+                async def put(self, mensaje) -> None:
                     db = MagicMock()
                     await wa._procesar_mensaje(db, telefono, mensaje, numero_destino)
 
                 def task_done(self) -> None:
                     pass
 
-            wa._phone_queues[telefono] = _InlineQueue()
+            wa._phone_queues[clave] = _InlineQueue()
 
         with patch.object(wa, "_ensure_worker", mock_ensure_worker), \
              patch.object(wa, "resolver_restaurante_por_numero", return_value=fake_rest):
@@ -487,17 +488,18 @@ class TestFase5EdgeCases:
 
         fake_rest = MagicMock(id="default", nombre="Test Restaurante")
 
-        async def mock_ensure_worker(telefono: str) -> None:
+        async def mock_ensure_worker(clave) -> None:
+            telefono, numero_destino = clave
+
             class _InlineQueue:
-                async def put(self, item) -> None:
-                    mensaje, numero_destino = item
+                async def put(self, mensaje) -> None:
                     db = MagicMock()
                     await wa._procesar_mensaje(db, telefono, mensaje, numero_destino)
 
                 def task_done(self) -> None:
                     pass
 
-            wa._phone_queues[telefono] = _InlineQueue()
+            wa._phone_queues[clave] = _InlineQueue()
 
         wa._rate_limits.clear()
         with patch.object(wa, "_ensure_worker", mock_ensure_worker), \

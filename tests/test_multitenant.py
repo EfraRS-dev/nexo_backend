@@ -96,7 +96,7 @@ class TestReferenciaPorRestaurante:
         mock_db.query.side_effect = _query
         mock_db.execute.return_value.scalar.return_value = 7  # secuencia
 
-        pedido = crear_pedido(mock_db, _COMANDA, "cli-1", "kikes")
+        pedido, _ = crear_pedido(mock_db, _COMANDA, "cli-1", "kikes")
 
         assert pedido.referencia == "KIKE-0007"
         assert pedido.restaurante_id == "kikes"

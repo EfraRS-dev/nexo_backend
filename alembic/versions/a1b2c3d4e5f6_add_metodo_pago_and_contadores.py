@@ -23,8 +23,9 @@ def upgrade() -> None:
         sa.Column("valor", sa.Integer(), nullable=False, server_default="0"),
         sa.PrimaryKeyConstraint("nombre"),
     )
-    # Fila inicial para el contador de pedidos
-    op.execute("INSERT INTO contadores (nombre, valor) VALUES ('pedidos', 0)")
+    # Nota: el contador se inicializa por tenant en runtime con la clave
+    # 'pedidos:{restaurante_id}' (ver order_service._siguiente_numero_pedido);
+    # no se siembra ninguna fila global aquí.
 
     # Columna metodo_pago en pedidos
     op.add_column(

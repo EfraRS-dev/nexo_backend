@@ -5,6 +5,7 @@ Cubre:
 - hash_password / verify_password
 - create_access_token / get_current_operador
 - POST /auth/login
+- POST /auth/refresh
 - GET  /admin/pedidos
 - GET  /admin/menu
 - POST /admin/menu
@@ -148,6 +149,47 @@ class TestAuthLogin:
 
         with pytest.raises(HTTPException) as exc_info:
             login(LoginRequest(email="nadie@nexo.app", password="cualquiera"), db=mock_db)
+
+        assert exc_info.value.status_code == 401
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 3b. POST /auth/refresh
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestAuthRefresh:
+    def test_refresh_devuelve_token_nuevo(self):
+        import jwt
+        from app.config import settings
+        from app.routers.auth import refresh
+        from app.models.operador import Operador
+
+        operador = MagicMock(spec=Operador)
+        operador.email = "admin@nexo.app"
+
+        response = refresh(operador=operador)
+
+        assert response.token_type == "bearer"
+        payload = jwt.decode(
+            response.access_token,
+            settings.secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+        assert payload["sub"] == "admin@nexo.app"
+
+    def test_refresh_requiere_token_valido(self):
+        # /auth/refresh se protege con la dependencia get_current_operador,
+        # que rechaza tokens inválidos con 401 (cubierto en TestJWT).
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+        from app.routers.auth import get_current_operador
+
+        fake_credentials = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials="token-invalido"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_operador(credentials=fake_credentials, db=MagicMock())
 
         assert exc_info.value.status_code == 401
 

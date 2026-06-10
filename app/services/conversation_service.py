@@ -71,8 +71,9 @@ def guardar_mensajes(db: Session, conversacion: Conversacion, messages: list) ->
 
 def guardar_estado_pedido(db: Session, conversacion: Conversacion, resultado: dict) -> None:
     """
-    Persiste el estado del pedido en curso (items, tipo, dirección, etapa)
-    dentro de la conversación para restaurarlo en la próxima invocación.
+    Persiste el estado del pedido en curso dentro de la conversación para
+    restaurarlo en la próxima invocación. Campos guardados: items, tipo_pedido,
+    direccion_entrega, etapa, esperando_confirmacion, comanda y metodo_pago.
     """
     estado_pedido = {
         "items": resultado.get("items", []),
@@ -96,7 +97,9 @@ def guardar_estado_pedido(db: Session, conversacion: Conversacion, resultado: di
 def restaurar_estado_pedido(conversacion: Conversacion) -> dict:
     """
     Restaura el estado del pedido en curso desde la conversación persistida.
-    Retorna un dict con items, tipo_pedido, dirección, etapa y etcétera.
+    Retorna un dict con los mismos campos que guarda `guardar_estado_pedido`:
+    items, tipo_pedido, direccion_entrega, etapa, esperando_confirmacion,
+    comanda y metodo_pago. Dict vacío si no hay estado previo.
     """
     for m in (conversacion.mensajes or []):
         if m.get("role") == "__estado__":

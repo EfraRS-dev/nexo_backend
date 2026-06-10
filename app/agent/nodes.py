@@ -113,15 +113,17 @@ def _repair_json(raw: str, state: AgentState, callbacks: list | None = None) -> 
     """Llama al LLM una vez más para convertir una respuesta en texto plano al JSON requerido."""
     logger.info("Intentando reparar respuesta no-JSON...")
     tipo_actual = state.get("tipo_pedido", "")
+    metodo_actual = state.get("metodo_pago", "")
     full_repair = (
         "La siguiente respuesta fue generada por un asistente de pedidos pero NO es JSON válido. "
         "Convierte su contenido al formato JSON requerido sin cambiar el significado. "
         "Devuelve SOLAMENTE el objeto JSON, sin texto adicional.\n\n"
         f"Respuesta original:\n{raw}\n\n"
         f"Items actuales (no los pierdas): {json.dumps(state.get('items', []), ensure_ascii=False)}\n"
-        f'Tipo pedido actual: "{tipo_actual}"\n\n'
+        f'Tipo pedido actual: "{tipo_actual}"\n'
+        f'Método de pago actual: "{metodo_actual}"\n\n'
         'El JSON debe tener exactamente estas claves: "respuesta", "items", "tipo_pedido", '
-        '"direccion_entrega", "pedido_listo", "esperando_confirmacion".'
+        '"direccion_entrega", "metodo_pago", "pedido_listo", "esperando_confirmacion".'
     )
     try:
         repair_response = _get_llm_json().invoke(
@@ -211,6 +213,7 @@ def nodo_conversar(
     config: RunnableConfig = None,
     menu_texto: str = "",
     restaurante_nombre: str = "",
+    zonas_texto: str = _ZONAS_TEXTO,
 ) -> dict:
     """
     Mantiene la conversación de pedido con el cliente.
@@ -220,7 +223,7 @@ def nodo_conversar(
     system = SYSTEM_PROMPT.format(
         menu=menu_texto or "(menú no disponible)",
         restaurante=restaurante_nombre or settings.restaurante_nombre,
-        zonas=_ZONAS_TEXTO,
+        zonas=zonas_texto or _ZONAS_TEXTO,
     )
 
     callbacks = _callbacks_from_config(config)
@@ -282,6 +285,7 @@ def nodo_faq(
     config: RunnableConfig = None,
     menu_texto: str = "",
     restaurante_nombre: str = "",
+    zonas_texto: str = _ZONAS_TEXTO,
 ) -> dict:
     """Responde preguntas frecuentes del restaurante. RF-08."""
     ultimo_mensaje = next(
@@ -303,6 +307,7 @@ def nodo_faq(
             SystemMessage(content=FAQ_PROMPT.format(
                 menu=menu_texto or "(menú no disponible)",
                 restaurante=restaurante_nombre or settings.restaurante_nombre,
+                zonas=zonas_texto or _ZONAS_TEXTO,
             )),
             HumanMessage(content=ultimo_mensaje),
         ],
