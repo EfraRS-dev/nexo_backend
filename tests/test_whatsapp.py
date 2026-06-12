@@ -391,9 +391,9 @@ class TestFase5EdgeCases:
         from app.utils.delivery_utils import validar_zona_domicilio
         assert validar_zona_domicilio("Calle 10 # 5-20, El Centro") is True
 
-    def test_zona_valida_chapinero(self):
+    def test_zona_valida_el_prado(self):
         from app.utils.delivery_utils import validar_zona_domicilio
-        assert validar_zona_domicilio("Carrera 7 # 52-40 Chapinero") is True
+        assert validar_zona_domicilio("Carrera 54 # 72-40, El Prado") is True
 
     def test_zona_fuera_de_cobertura(self):
         from app.utils.delivery_utils import validar_zona_domicilio
