@@ -2,20 +2,27 @@
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ZONAS DE COBERTURA PARA DOMICILIO
-# Lista de barrios/sectores cubiertos (usado en SYSTEM_PROMPT y en validación)
+# Barrios de la localidad Norte-Centro Histórico de Barranquilla.
+# (usado en SYSTEM_PROMPT y en validación)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ZONAS_COBERTURA: list[str] = [
     "el centro",
-    "la candelaria",
-    "chapinero",
-    "la soledad",
-    "teusaquillo",
-    "barrios unidos",
-    "galerías",
-    "palermo",
-    "la esperanza",
-    "san victorino",
+    "barrio abajo",
+    "el prado",
+    "alto prado",
+    "altos del prado",
+    "bellavista",
+    "boston",
+    "el rosario",
+    "la concepción",
+    "las delicias",
+    "montecristo",
+    "el porvenir",
+    "paraíso",
+    "villa country",
+    "villanueva",
+    "granadillo",
 ]
 
 def zonas_a_texto(zonas: list[str]) -> str:
