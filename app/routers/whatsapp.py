@@ -157,6 +157,7 @@ async def _phone_worker(clave: _ConversationKey) -> None:
                     enviar_mensaje,
                     telefono,
                     "Lo siento, tuve un problema procesando tu mensaje. ¿Podrías intentar de nuevo? 🙏",
+                    numero_destino,
                 )
             except Exception:
                 pass
@@ -230,6 +231,7 @@ async def webhook_whatsapp(
             enviar_mensaje,
             telefono,
             "Estás enviando muchos mensajes seguidos. Espera un momento antes de continuar. 🙏",
+            numero_destino,
         )
         return Response(status_code=200, content="OK")
 
@@ -240,6 +242,7 @@ async def webhook_whatsapp(
             enviar_mensaje,
             telefono,
             "Solo proceso mensajes de texto. ¿Podrías escribirme tu pedido? 📝",
+            numero_destino,
         )
         return Response(status_code=200, content="OK")
 
@@ -248,6 +251,7 @@ async def webhook_whatsapp(
             enviar_mensaje,
             telefono,
             "No pude leer tu mensaje. ¿Podrías escribirlo de nuevo? 😊",
+            numero_destino,
         )
         return Response(status_code=200, content="OK")
 
@@ -283,6 +287,13 @@ async def _procesar_mensaje(
 
     restaurante_id = restaurante.id if restaurante else RESTAURANTE_DEFAULT
     restaurante_nombre = restaurante.nombre if restaurante else settings.restaurante_nombre
+    # Número desde el que responde este tenant: el WhatsApp del restaurante
+    # resuelto (al que el cliente escribió). Fallback al número global solo si
+    # no hay restaurante. Evita 404 de Twilio por enviar desde un remitente
+    # que no corresponde al número destino entrante.
+    numero_remitente = (
+        restaurante.numero_whatsapp if restaurante else settings.twilio_whatsapp_number
+    )
 
     # ── 3. Buscar/crear cliente ───────────────────────────────────────
     cliente = obtener_o_crear_cliente(db, telefono)
@@ -376,6 +387,7 @@ async def _procesar_mensaje(
             enviar_mensaje,
             telefono,
             "Lo siento, tuve un problema procesando tu mensaje. ¿Podrías intentar de nuevo? 🙏",
+            numero_remitente,
         )
         return
 
@@ -409,6 +421,7 @@ async def _procesar_mensaje(
             f"Lo siento, no cubrimos domicilios en esa dirección. 😔\n"
             "¿Te gustaría recoger tu pedido en tienda (llevar) o indicar "
             "una dirección dentro de nuestra zona de cobertura?",
+            numero_remitente,
         )
         return
     # Wrapped so a DB error never silences the response to the client.
@@ -442,10 +455,12 @@ async def _procesar_mensaje(
 
     # ── 13. Enviar respuesta del agente al cliente ────────────────────
     if respuesta:
-        await asyncio.to_thread(enviar_mensaje, telefono, respuesta)
+        await asyncio.to_thread(enviar_mensaje, telefono, respuesta, numero_remitente)
     else:
         logger.warning("Respuesta vacía generada para %s — enviando fallback", telefono)
-        await asyncio.to_thread(enviar_mensaje, telefono, "Un momento, ¿en qué te puedo ayudar? 😊")
+        await asyncio.to_thread(
+            enviar_mensaje, telefono, "Un momento, ¿en qué te puedo ayudar? 😊", numero_remitente
+        )
 
     # ── 14. Enviar link de pago (online) o confirmación (caja) ────────
     # Solo si el pedido se creó en ESTE turno: un pedido idempotente (duplicado
@@ -459,10 +474,12 @@ async def _procesar_mensaje(
                 telefono,
                 f"💳 *Paga tu pedido {pedido.referencia}:*\n{link}\n\n"
                 "Una vez confirmado recibirás la notificación. 🏦",
+                numero_remitente,
             )
         else:
             await asyncio.to_thread(
                 enviar_mensaje,
                 telefono,
                 f"📋 Tu número de pedido es *{pedido.referencia}*. ¡Te esperamos! 🍔",
+                numero_remitente,
             )

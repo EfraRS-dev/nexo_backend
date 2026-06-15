@@ -22,6 +22,7 @@ from app.models.conversacion import Conversacion
 from app.models.pago import Pago
 from app.services.conversation_service import finalizar_conversacion
 from app.services.order_service import marcar_pedido_pagado, obtener_pedido_por_referencia
+from app.services.restaurante_service import obtener_restaurante
 from app.services.whatsapp_service import enviar_mensaje, enviar_recibo
 
 logger = logging.getLogger(__name__)
@@ -152,9 +153,16 @@ async def webhook_wompi(
         return Response(status_code=200, content="OK")
 
     # ── 9. Enviar confirmación + recibo por WhatsApp ──────────────────
+    # Responder desde el número del tenant dueño del pedido (no el global),
+    # para que Twilio no rechace el envío con 404 por remitente ajeno.
+    restaurante = obtener_restaurante(db, pedido.restaurante_id)
+    numero_remitente = (
+        restaurante.numero_whatsapp if restaurante else settings.twilio_whatsapp_number
+    )
     enviar_mensaje(
         cliente.telefono,
         f"✅ *¡Pago recibido!* Tu pedido *{referencia}* está confirmado y en preparación. ¡Gracias! 🍔",
+        numero_remitente,
     )
 
     from app.models.item_pedido import ItemPedido
@@ -185,7 +193,7 @@ async def webhook_wompi(
         "tipo_pedido": pedido.tipo,
         "direccion_entrega": pedido.direccion_entrega,
     }
-    enviar_recibo(cliente.telefono, comanda_recibo)
+    enviar_recibo(cliente.telefono, comanda_recibo, numero_remitente)
 
     # ── 10. Finalizar conversación activa del cliente en este tenant ──
     # Filtra por restaurante_id del pedido para no cerrar la conversación de

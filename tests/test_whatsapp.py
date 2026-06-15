@@ -39,6 +39,17 @@ class TestWhatsappService:
         assert "Hola, tu pedido está listo" in str(call_kwargs)
 
     @patch("app.services.whatsapp_service._get_client")
+    def test_enviar_mensaje_usa_remitente_del_tenant(self, mock_client):
+        """El `from_` debe ser el número del tenant pasado, no el global."""
+        mock_client.return_value.messages.create.return_value = MagicMock(sid="SM1")
+
+        from app.services.whatsapp_service import enviar_mensaje
+        enviar_mensaje("+573001234567", "Hola", numero_remitente="+14155238886")
+
+        call_kwargs = mock_client.return_value.messages.create.call_args.kwargs
+        assert call_kwargs["from_"] == "whatsapp:+14155238886"
+
+    @patch("app.services.whatsapp_service._get_client")
     def test_enviar_mensaje_falla_retorna_none(self, mock_client):
         mock_client.return_value.messages.create.side_effect = Exception("Twilio error")
 

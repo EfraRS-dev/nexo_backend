@@ -22,21 +22,28 @@ def _get_client() -> Client:
     return _client
 
 
-def enviar_mensaje(telefono: str, texto: str) -> str | None:
+def enviar_mensaje(
+    telefono: str, texto: str, numero_remitente: str | None = None
+) -> str | None:
     """
     Envía un mensaje de WhatsApp al número indicado.
 
     Args:
         telefono: Número destino en formato E.164 (ej: +573001234567).
         texto: Cuerpo del mensaje.
+        numero_remitente: Número WhatsApp del tenant que envía (formato E.164).
+            Si es None/vacío, se usa el número global de `settings`. Permite que
+            cada restaurante (multi-tenant) responda desde el número al que el
+            cliente le escribió, evitando 404 de Twilio por remitente ajeno.
 
     Returns:
         SID del mensaje de Twilio, o None si falla.
     """
+    remitente = numero_remitente or settings.twilio_whatsapp_number
     try:
         message = _get_client().messages.create(
             body=texto,
-            from_=f"whatsapp:{settings.twilio_whatsapp_number}",
+            from_=f"whatsapp:{remitente}",
             to=f"whatsapp:{telefono}",
         )
         logger.info("Mensaje enviado a %s — SID: %s", telefono, message.sid)
@@ -46,13 +53,16 @@ def enviar_mensaje(telefono: str, texto: str) -> str | None:
         return None
 
 
-def enviar_recibo(telefono: str, comanda: dict) -> str | None:
+def enviar_recibo(
+    telefono: str, comanda: dict, numero_remitente: str | None = None
+) -> str | None:
     """
     Envía un recibo formateado con los detalles del pedido.
 
     Args:
         telefono: Número destino.
         comanda: Dict con referencia, items, total, tipo_pedido, direccion_entrega.
+        numero_remitente: Número WhatsApp del tenant que envía (ver enviar_mensaje).
     """
     items = comanda.get("items", [])
     lineas = "\n".join(
@@ -71,4 +81,4 @@ def enviar_recibo(telefono: str, comanda: dict) -> str | None:
         f"📦 Tipo: {tipo}{dir_linea}\n\n"
         f"¡Gracias por tu compra! 🍔"
     )
-    return enviar_mensaje(telefono, texto)
+    return enviar_mensaje(telefono, texto, numero_remitente)
