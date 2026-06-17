@@ -41,7 +41,13 @@ from app.services.restaurante_service import (
     obtener_restaurante,
     resolver_restaurante_por_numero,
 )
-from app.utils.delivery_utils import obtener_zonas_cobertura, validar_zona_domicilio
+from app.utils.delivery_utils import (
+    obtener_contacto,
+    obtener_horario,
+    obtener_metodos_pago_texto,
+    obtener_zonas_cobertura,
+    validar_zona_domicilio,
+)
 from app.agent.prompts import zonas_a_texto
 from app.agent.graph import construir_grafo
 from app.agent.state import AgentState
@@ -349,7 +355,14 @@ async def _procesar_mensaje(
     # prompts y la validación de domicilio; evita el drift del bug A-2).
     zonas_cobertura = obtener_zonas_cobertura(restaurante)
     menu_texto = obtener_menu_formateado(db, restaurante_id)
-    grafo = construir_grafo(menu_texto, restaurante_nombre, zonas_a_texto(zonas_cobertura))
+    grafo = construir_grafo(
+        menu_texto,
+        restaurante_nombre,
+        zonas_a_texto(zonas_cobertura),
+        horario=obtener_horario(restaurante),
+        contacto=obtener_contacto(restaurante),
+        metodos_pago=obtener_metodos_pago_texto(restaurante),
+    )
 
     # ── 8. Armar estado inicial para el grafo ─────────────────────────
     estado: AgentState = {

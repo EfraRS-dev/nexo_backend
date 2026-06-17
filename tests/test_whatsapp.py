@@ -420,6 +420,43 @@ class TestFase5EdgeCases:
         assert validar_zona_domicilio("Carrera 1 en Zona Norte", ["zona norte"]) is True
         assert validar_zona_domicilio("Carrera 1 en Zona Sur", ["zona norte"]) is False
 
+    # ── Lectores de config del tenant (horario/contacto/métodos) ──────
+
+    def test_obtener_horario_default_sin_config(self):
+        from app.utils.delivery_utils import obtener_horario
+        from app.agent.prompts import HORARIO_DEFAULT
+        assert obtener_horario(None) == HORARIO_DEFAULT
+
+    def test_obtener_horario_desde_config(self):
+        from types import SimpleNamespace
+        from app.utils.delivery_utils import obtener_horario
+        rest = SimpleNamespace(config_json={"horario": "L-V 8am-5pm"})
+        assert obtener_horario(rest) == "L-V 8am-5pm"
+
+    def test_obtener_contacto_combina_telefono_y_email(self):
+        from types import SimpleNamespace
+        from app.utils.delivery_utils import obtener_contacto
+        rest = SimpleNamespace(config_json={"telefono_contacto": "+57 300", "email": "a@b.co"})
+        texto = obtener_contacto(rest)
+        assert "+57 300" in texto and "a@b.co" in texto
+
+    def test_obtener_contacto_default_sin_datos(self):
+        from app.utils.delivery_utils import obtener_contacto
+        from app.agent.prompts import CONTACTO_DEFAULT
+        assert obtener_contacto(None) == CONTACTO_DEFAULT
+
+    def test_obtener_metodos_pago_etiqueta_conocidos(self):
+        from types import SimpleNamespace
+        from app.utils.delivery_utils import obtener_metodos_pago_texto
+        rest = SimpleNamespace(config_json={"metodos_pago": ["online", "caja"]})
+        texto = obtener_metodos_pago_texto(rest)
+        assert "línea" in texto and "caja" in texto
+
+    def test_obtener_metodos_pago_default_sin_config(self):
+        from app.utils.delivery_utils import obtener_metodos_pago_texto
+        from app.agent.prompts import METODOS_PAGO_DEFAULT
+        assert obtener_metodos_pago_texto(None) == METODOS_PAGO_DEFAULT
+
     # ── Timeout de conversación ───────────────────────────────────────
 
     def test_timeout_conversacion_activa(self):
