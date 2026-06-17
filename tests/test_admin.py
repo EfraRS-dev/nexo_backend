@@ -551,3 +551,158 @@ class TestPerfilOperador:
         result = obtener_perfil(db=MagicMock(), operador=operador)
 
         assert result.restaurante_nombre == "huerfano"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 7. INFORMACIÓN DEL RESTAURANTE (/admin/restaurante)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestAdminRestaurante:
+    def _make_rest(self, config=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            id="default",
+            nombre="Nexo",
+            numero_whatsapp="+573000000000",
+            prefijo="NEXO",
+            activo=True,
+            config_json=config,
+        )
+
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_get_aplana_config_json(self, mock_obtener):
+        from app.routers.admin import obtener_restaurante_info
+        from app.models.operador import Operador
+
+        mock_obtener.return_value = self._make_rest({
+            "horario": "L-D 10am-9pm",
+            "zonas_cobertura": ["el prado", "boston"],
+            "telefono_contacto": "+57 300 111 2233",
+        })
+        operador = MagicMock(spec=Operador, restaurante_id="default")
+
+        result = obtener_restaurante_info(db=MagicMock(), operador=operador)
+
+        assert result.nombre == "Nexo"
+        assert result.numero_whatsapp == "+573000000000"
+        assert result.horario == "L-D 10am-9pm"
+        assert result.zonas_cobertura == ["el prado", "boston"]
+        assert result.telefono_contacto == "+57 300 111 2233"
+        assert result.descripcion is None  # campo no definido → None
+
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_get_config_json_nulo_devuelve_campos_none(self, mock_obtener):
+        from app.routers.admin import obtener_restaurante_info
+        from app.models.operador import Operador
+
+        mock_obtener.return_value = self._make_rest(None)
+
+        result = obtener_restaurante_info(
+            db=MagicMock(), operador=MagicMock(spec=Operador, restaurante_id="default")
+        )
+
+        assert result.horario is None
+        assert result.zonas_cobertura is None
+
+    @patch("app.routers.admin.obtener_restaurante", return_value=None)
+    def test_get_404_si_no_existe(self, mock_obtener):
+        from fastapi import HTTPException
+        from app.routers.admin import obtener_restaurante_info
+        from app.models.operador import Operador
+
+        with pytest.raises(HTTPException) as exc:
+            obtener_restaurante_info(
+                db=MagicMock(), operador=MagicMock(spec=Operador, restaurante_id="default")
+            )
+        assert exc.value.status_code == 404
+
+    @patch("app.routers.admin.invalidar_menu")
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_patch_mergea_sin_pisar_otras_claves(self, mock_obtener, mock_inval):
+        from app.routers.admin import actualizar_restaurante, UpdateRestauranteRequest
+        from app.models.operador import Operador
+
+        rest = self._make_rest({"zonas_cobertura": ["el prado"]})
+        mock_obtener.return_value = rest
+        mock_db = MagicMock()
+
+        result = actualizar_restaurante(
+            body=UpdateRestauranteRequest(horario="L-V 9-6"),
+            db=mock_db,
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
+        )
+
+        assert rest.config_json["horario"] == "L-V 9-6"
+        assert rest.config_json["zonas_cobertura"] == ["el prado"]  # intacto
+        assert result.horario == "L-V 9-6"
+        mock_db.commit.assert_called_once()
+        # Aislamiento: lee/escribe solo el tenant del operador, y limpia su caché
+        assert mock_obtener.call_args.args[1] == "default"
+        mock_inval.assert_called_once_with("default")
+
+    @patch("app.routers.admin.invalidar_menu")
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_patch_campo_null_lo_limpia(self, mock_obtener, mock_inval):
+        from app.routers.admin import actualizar_restaurante, UpdateRestauranteRequest
+        from app.models.operador import Operador
+
+        rest = self._make_rest({"horario": "viejo", "zonas_cobertura": ["el prado"]})
+        mock_obtener.return_value = rest
+
+        actualizar_restaurante(
+            body=UpdateRestauranteRequest(horario=None),
+            db=MagicMock(),
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
+        )
+
+        assert rest.config_json["horario"] is None  # explícito null → limpiado
+        assert rest.config_json["zonas_cobertura"] == ["el prado"]
+
+    @patch("app.routers.admin.invalidar_menu")
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_patch_nombre_actualiza_columna_y_recorta(self, mock_obtener, mock_inval):
+        from app.routers.admin import actualizar_restaurante, UpdateRestauranteRequest
+        from app.models.operador import Operador
+
+        rest = self._make_rest()
+        mock_obtener.return_value = rest
+
+        result = actualizar_restaurante(
+            body=UpdateRestauranteRequest(nombre="  Kike's Plaza  "),
+            db=MagicMock(),
+            operador=MagicMock(spec=Operador, restaurante_id="default"),
+        )
+
+        assert rest.nombre == "Kike's Plaza"
+        assert result.nombre == "Kike's Plaza"
+
+    @patch("app.routers.admin.invalidar_menu")
+    @patch("app.routers.admin.obtener_restaurante")
+    def test_patch_nombre_vacio_lanza_400(self, mock_obtener, mock_inval):
+        from fastapi import HTTPException
+        from app.routers.admin import actualizar_restaurante, UpdateRestauranteRequest
+        from app.models.operador import Operador
+
+        mock_obtener.return_value = self._make_rest()
+
+        with pytest.raises(HTTPException) as exc:
+            actualizar_restaurante(
+                body=UpdateRestauranteRequest(nombre="   "),
+                db=MagicMock(),
+                operador=MagicMock(spec=Operador, restaurante_id="default"),
+            )
+        assert exc.value.status_code == 400
+
+    @patch("app.routers.admin.obtener_restaurante", return_value=None)
+    def test_patch_404_si_no_existe(self, mock_obtener):
+        from fastapi import HTTPException
+        from app.routers.admin import actualizar_restaurante, UpdateRestauranteRequest
+        from app.models.operador import Operador
+
+        with pytest.raises(HTTPException) as exc:
+            actualizar_restaurante(
+                body=UpdateRestauranteRequest(horario="x"),
+                db=MagicMock(),
+                operador=MagicMock(spec=Operador, restaurante_id="default"),
+            )
+        assert exc.value.status_code == 404

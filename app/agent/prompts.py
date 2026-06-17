@@ -34,6 +34,13 @@ def zonas_a_texto(zonas: list[str]) -> str:
 # del tenant resuelto en runtime; este sirve de fallback en pruebas/uso directo.
 _ZONAS_TEXTO = zonas_a_texto(ZONAS_COBERTURA)
 
+# Textos por defecto de la FAQ (tenant sin estos campos en config_json). Igual que
+# las zonas, los nodos reciben el valor del tenant resuelto en runtime; estos sirven
+# de fallback. Ver helpers en app/utils/delivery_utils.py.
+HORARIO_DEFAULT = "Lunes a domingo de 11:00 a.m. a 10:00 p.m."
+CONTACTO_DEFAULT = "disponible a través de este chat"
+METODOS_PAGO_DEFAULT = "Wompi (tarjeta débito/crédito, Nequi, PSE)"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PROMPT DE CLASIFICACIÓN DE INTENCIÓN
 # Usado por nodo_clasificar. Respuesta mínima: una sola palabra.
@@ -135,11 +142,11 @@ MENÚ DISPONIBLE:
 {menu}
 
 INFORMACIÓN DEL RESTAURANTE:
-- Horario: Lunes a domingo de 11:00 a.m. a 10:00 p.m.
+- Horario: {horario}
 - Cobertura de domicilio: solo estas zonas: {zonas}. Tiempo estimado 30-45 minutos. Fuera de esas zonas no hay domicilio (sugiere recoger en tienda).
-- Métodos de pago: Wompi (tarjeta débito/crédito, Nequi, PSE).
+- Métodos de pago: {metodos_pago}
 - Tiempo de preparación: 15-20 minutos para llevar.
-- Teléfono de contacto: disponible a través de este chat.
+- Teléfono de contacto: {contacto}
 
 Si el cliente pregunta por productos o recomendaciones, úsalos del menú disponible. Si la pregunta no está en la información disponible, responde amablemente que no tienes esa información y ofrece conectarlos con un operador.
 

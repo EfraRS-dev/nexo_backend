@@ -70,6 +70,9 @@ def construir_grafo(
     menu_texto: str = "",
     restaurante_nombre: str = "",
     zonas_texto: str = "",
+    horario: str = "",
+    contacto: str = "",
+    metodos_pago: str = "",
 ) -> StateGraph:
     """
     Construye y compila el grafo LangGraph.
@@ -82,6 +85,8 @@ def construir_grafo(
         zonas_texto: Zonas de cobertura del tenant ya formateadas. Vacío → los
                      nodos usan el default _ZONAS_TEXTO. Misma fuente que la
                      validación de domicilio (ver bug A-2).
+        horario, contacto, metodos_pago: Datos de la FAQ del tenant
+                     (config_json). Vacío → los nodos usan los defaults.
     """
     builder = StateGraph(AgentState)
 
@@ -97,6 +102,9 @@ def construir_grafo(
         menu_texto=menu_texto,
         restaurante_nombre=restaurante_nombre,
         zonas_texto=zonas_texto,
+        horario=horario,
+        contacto=contacto,
+        metodos_pago=metodos_pago,
     )
 
     # ── Registrar nodos ───────────────────────────────────────────────

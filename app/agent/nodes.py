@@ -15,7 +15,10 @@ from langchain_openai import ChatOpenAI
 
 from app.agent.prompts import (
     CLASSIFICATION_PROMPT,
+    CONTACTO_DEFAULT,
     FAQ_PROMPT,
+    HORARIO_DEFAULT,
+    METODOS_PAGO_DEFAULT,
     MSG_ESCALAMIENTO,
     MSG_ESTADO_SIN_PEDIDO,
     SYSTEM_PROMPT,
@@ -286,6 +289,9 @@ def nodo_faq(
     menu_texto: str = "",
     restaurante_nombre: str = "",
     zonas_texto: str = _ZONAS_TEXTO,
+    horario: str = HORARIO_DEFAULT,
+    contacto: str = CONTACTO_DEFAULT,
+    metodos_pago: str = METODOS_PAGO_DEFAULT,
 ) -> dict:
     """Responde preguntas frecuentes del restaurante. RF-08."""
     ultimo_mensaje = next(
@@ -308,6 +314,9 @@ def nodo_faq(
                 menu=menu_texto or "(menú no disponible)",
                 restaurante=restaurante_nombre or settings.restaurante_nombre,
                 zonas=zonas_texto or _ZONAS_TEXTO,
+                horario=horario or HORARIO_DEFAULT,
+                contacto=contacto or CONTACTO_DEFAULT,
+                metodos_pago=metodos_pago or METODOS_PAGO_DEFAULT,
             )),
             HumanMessage(content=ultimo_mensaje),
         ],

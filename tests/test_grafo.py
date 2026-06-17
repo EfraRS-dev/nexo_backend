@@ -282,6 +282,24 @@ class TestFlujoFaq:
         assert "(menú no disponible)" in system_content
 
     @patch("app.agent.nodes._get_llm")
+    def test_faq_inyecta_horario_contacto_metodos(self, mock_llm):
+        """El FAQ_PROMPT refleja horario/contacto/métodos del tenant (config_json)."""
+        mock_llm.return_value.invoke.return_value = _mock_ai_response("ok")
+        state = _make_state(messages=[HumanMessage(content="¿Hasta qué hora abren?")])
+        nodo_faq(
+            state,
+            menu_texto=MENU_TEXTO_TEST,
+            horario="Solo sábados 4pm-11pm",
+            contacto="teléfono +57 300 555 1234",
+            metodos_pago="solo efectivo",
+        )
+
+        system_content = mock_llm.return_value.invoke.call_args[0][0][0].content
+        assert "Solo sábados 4pm-11pm" in system_content
+        assert "+57 300 555 1234" in system_content
+        assert "solo efectivo" in system_content
+
+    @patch("app.agent.nodes._get_llm")
     def test_faq_no_modifica_items_ni_etapa(self, mock_llm):
         """FAQ no debe cambiar items, etapa ni otros campos de pedido."""
         mock_llm.return_value.invoke.return_value = _mock_ai_response("Aceptamos Nequi y PSE.")

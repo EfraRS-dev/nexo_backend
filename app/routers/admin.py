@@ -2,6 +2,8 @@
 Router de administración.
 
 GET    /admin/me               — perfil del operador autenticado + su restaurante
+GET    /admin/restaurante       — información del restaurante (tenant) del operador
+PATCH  /admin/restaurante       — actualiza la información del restaurante (parcial)
 GET    /admin/pedidos           — lista paginada con filtros (estado, metodo_pago, fecha)
 GET    /admin/menu              — todos los ítems del menú
 POST   /admin/menu              — crea ítem
@@ -25,6 +27,7 @@ from app.models.item_pedido import ItemPedido
 from app.models.menu import Menu
 from app.models.operador import Operador
 from app.models.pedido import Pedido
+from app.models.restaurante import Restaurante
 from app.routers.auth import get_current_operador
 from app.services.restaurante_service import obtener_restaurante
 from app.cache import invalidar_menu
@@ -109,6 +112,62 @@ class OperadorMeOut(BaseModel):
     restaurante_nombre: str
 
 
+# Campos de la información del restaurante que viven en config_json (el resto
+# —nombre— es columna). Se usan para aplanar la salida y validar el merge.
+_CONFIG_FIELDS = (
+    "descripcion",
+    "direccion",
+    "horario",
+    "email",
+    "telefono_contacto",
+    "redes_sociales",
+    "metodos_pago",
+    "zonas_cobertura",
+)
+
+
+class RestauranteOut(BaseModel):
+    id: str
+    nombre: str
+    numero_whatsapp: str
+    prefijo: str
+    activo: bool
+    # Campos de config_json (aplanados); null si el tenant no los ha definido.
+    descripcion: str | None = None
+    direccion: str | None = None
+    horario: str | None = None
+    email: str | None = None
+    telefono_contacto: str | None = None
+    redes_sociales: dict | None = None
+    metodos_pago: list[str] | None = None
+    zonas_cobertura: list[str] | None = None
+
+
+class UpdateRestauranteRequest(BaseModel):
+    nombre: str | None = None
+    descripcion: str | None = None
+    direccion: str | None = None
+    horario: str | None = None
+    email: str | None = None
+    telefono_contacto: str | None = None
+    redes_sociales: dict | None = None
+    metodos_pago: list[str] | None = None
+    zonas_cobertura: list[str] | None = None
+
+
+def _restaurante_out(rest: Restaurante) -> RestauranteOut:
+    """Aplana un Restaurante (columnas + config_json) a RestauranteOut."""
+    config = rest.config_json or {}
+    return RestauranteOut(
+        id=rest.id,
+        nombre=rest.nombre,
+        numero_whatsapp=rest.numero_whatsapp,
+        prefijo=rest.prefijo,
+        activo=rest.activo,
+        **{k: config.get(k) for k in _CONFIG_FIELDS},
+    )
+
+
 # ── Perfil ──────────────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=OperadorMeOut)
@@ -123,6 +182,60 @@ def obtener_perfil(
         restaurante_id=operador.restaurante_id,
         restaurante_nombre=rest.nombre if rest else operador.restaurante_id,
     )
+
+
+# ── Restaurante (tenant) ────────────────────────────────────────────────────────
+
+@router.get("/restaurante", response_model=RestauranteOut)
+def obtener_restaurante_info(
+    db: Session = Depends(get_db),
+    operador: Operador = Depends(get_current_operador),
+):
+    """Retorna la información del restaurante (tenant) del operador."""
+    rest = obtener_restaurante(db, operador.restaurante_id)
+    if rest is None:
+        raise HTTPException(status_code=404, detail="Restaurante no encontrado")
+    return _restaurante_out(rest)
+
+
+@router.patch("/restaurante", response_model=RestauranteOut)
+def actualizar_restaurante(
+    body: UpdateRestauranteRequest,
+    db: Session = Depends(get_db),
+    operador: Operador = Depends(get_current_operador),
+):
+    """Actualiza la información del restaurante del operador.
+
+    `nombre` es columna; el resto de campos se mergean dentro de config_json.
+    exclude_unset distingue "no enviado" de "enviado como null": un campo
+    explícito a null/[] lo limpia; un campo ausente no se toca.
+    """
+    rest = obtener_restaurante(db, operador.restaurante_id)
+    if rest is None:
+        raise HTTPException(status_code=404, detail="Restaurante no encontrado")
+
+    data = body.model_dump(exclude_unset=True)
+
+    if "nombre" in data:
+        nombre = data.pop("nombre")
+        if not nombre or not nombre.strip():
+            raise HTTPException(status_code=400, detail="El nombre no puede estar vacío")
+        rest.nombre = nombre.strip()
+
+    # Campos restantes → merge en config_json. Reasignar un dict nuevo (no mutar
+    # in-place) para que SQLAlchemy detecte el cambio en la columna JSONB.
+    if data:
+        config = dict(rest.config_json or {})
+        config.update(data)
+        rest.config_json = config
+
+    db.commit()
+    db.refresh(rest)
+    # Limpia la caché de FAQ del tenant (invalidar_menu borra menú + nexo:faq:{id}:*)
+    # para que las respuestas reflejen el horario/contacto/zonas nuevos.
+    invalidar_menu(operador.restaurante_id)
+    logger.info("Restaurante actualizado: %s", rest.id)
+    return _restaurante_out(rest)
 
 
 # ── Pedidos ───────────────────────────────────────────────────────────────────
